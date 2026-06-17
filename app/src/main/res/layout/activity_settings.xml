@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:background="@android:color/white"
+    android:padding="20dp">
+
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="阅读设置" android:textColor="@android:color/black"
+        android:textSize="22sp" android:textStyle="bold"
+        android:layout_marginBottom="24dp" />
+
+    <!-- 字体大小 -->
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="字体大小" android:textColor="@android:color/black"
+        android:textSize="18sp" android:layout_marginBottom="8dp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:layout_marginBottom="20dp">
+        <TextView android:id="@+id/label_text_size"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="20" android:textColor="@android:color/black"
+            android:textSize="16sp" android:layout_marginRight="12dp" />
+        <SeekBar android:id="@+id/seek_text_size"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:max="40" android:progress="20" />
+    </LinearLayout>
+
+    <!-- 行距 -->
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="行距" android:textColor="@android:color/black"
+        android:textSize="18sp" android:layout_marginBottom="8dp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:layout_marginBottom="20dp">
+        <TextView android:id="@+id/label_line_spacing"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="1.5" android:textColor="@android:color/black"
+            android:textSize="16sp" android:layout_marginRight="12dp" />
+        <SeekBar android:id="@+id/seek_line_spacing"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:max="30" android:progress="15" />
+    </LinearLayout>
+
+    <!-- 段距 -->
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="段距" android:textColor="@android:color/black"
+        android:textSize="18sp" android:layout_marginBottom="8dp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:layout_marginBottom="20dp">
+        <TextView android:id="@+id/label_para_spacing"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="1.8" android:textColor="@android:color/black"
+            android:textSize="16sp" android:layout_marginRight="12dp" />
+        <SeekBar android:id="@+id/seek_para_spacing"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:max="30" android:progress="18" />
+    </LinearLayout>
+
+    <!-- 左右边距 -->
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="左右边距" android:textColor="@android:color/black"
+        android:textSize="18sp" android:layout_marginBottom="8dp" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="horizontal" android:gravity="center_vertical"
+        android:layout_marginBottom="20dp">
+        <TextView android:id="@+id/label_horizontal_margin"
+            android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="10" android:textColor="@android:color/black"
+            android:textSize="16sp" android:layout_marginRight="12dp" />
+        <SeekBar android:id="@+id/seek_horizontal_margin"
+            android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:max="60" android:progress="10" />
+    </LinearLayout>
+
+    <!-- 字体选择 -->
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="字体" android:textColor="@android:color/black"
+        android:textSize="18sp" android:layout_marginBottom="8dp" />
+    <ListView android:id="@+id/font_list"
+        android:layout_width="match_parent" android:layout_height="0dp"
+        android:layout_weight="1"
+        android:divider="@android:color/black"
+        android:dividerHeight="1dp" />
+
+</LinearLayout>
+
+
