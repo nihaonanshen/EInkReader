@@ -1,0 +1,14 @@
+D:\EInkReader\rust\einkreader-core\target\x86_64-linux-android\release\deps\crc-9eb11a1728b6707d.d: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc128.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc16.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc32.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc64.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc8.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\table.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\util.rs
+
+D:\EInkReader\rust\einkreader-core\target\x86_64-linux-android\release\deps\libcrc-9eb11a1728b6707d.rlib: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc128.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc16.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc32.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc64.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc8.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\table.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\util.rs
+
+D:\EInkReader\rust\einkreader-core\target\x86_64-linux-android\release\deps\libcrc-9eb11a1728b6707d.rmeta: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc128.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc16.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc32.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc64.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc8.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\table.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\util.rs
+
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\lib.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc128.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc16.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc32.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc64.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\crc8.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\table.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\crc-3.4.0\src\util.rs:

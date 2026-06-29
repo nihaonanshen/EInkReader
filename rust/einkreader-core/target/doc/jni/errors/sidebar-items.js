@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Error","JniError","StartJvmError"],"fn":["jni_error_code_to_result"],"struct":["Exception"],"trait":["ToException"],"type":["Result","StartJvmResult"]};

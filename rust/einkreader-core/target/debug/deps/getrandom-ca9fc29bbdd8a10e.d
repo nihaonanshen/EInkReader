@@ -1,0 +1,12 @@
+D:\EInkReader\rust\einkreader-core\target\debug\deps\getrandom-ca9fc29bbdd8a10e.d: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\backends.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\error.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\util.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\../README.md C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\backends\windows.rs
+
+D:\EInkReader\rust\einkreader-core\target\debug\deps\libgetrandom-ca9fc29bbdd8a10e.rlib: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\backends.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\error.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\util.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\../README.md C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\backends\windows.rs
+
+D:\EInkReader\rust\einkreader-core\target\debug\deps\libgetrandom-ca9fc29bbdd8a10e.rmeta: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\backends.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\error.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\util.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\../README.md C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\backends\windows.rs
+
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\lib.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\backends.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\error.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\util.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\../README.md:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\getrandom-0.4.3\src\backends\windows.rs:

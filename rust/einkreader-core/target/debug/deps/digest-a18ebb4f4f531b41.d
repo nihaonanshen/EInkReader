@@ -1,0 +1,12 @@
+D:\EInkReader\rust\einkreader-core\target\debug\deps\digest-a18ebb4f4f531b41.d: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\ct_variable.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\rt_variable.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\wrapper.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\xof_reader.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\digest.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\mac.rs
+
+D:\EInkReader\rust\einkreader-core\target\debug\deps\libdigest-a18ebb4f4f531b41.rmeta: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\ct_variable.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\rt_variable.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\wrapper.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\xof_reader.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\digest.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\mac.rs
+
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\lib.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\ct_variable.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\rt_variable.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\wrapper.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\core_api\xof_reader.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\digest.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\digest-0.10.7\src\mac.rs:

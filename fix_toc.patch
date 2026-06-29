@@ -1,0 +1,57 @@
+*** Begin Patch
+*** Update File: D:/EInkReader/rust/einkreader-core/src/parser/epub.rs
+@@ -317,6 +317,7 @@
+ fn parse_ncx(
+     archive: &mut ZipArchive<fs::File>,
+     opf_dir: &str,
+     opf_result: &OpfResult,
+ ) -> HashMap<String, String> {
++    let mut nav_point_depth: usize = 0;
+     let mut ncx_titles = HashMap::new();
+ 
+     let ncx_href = match &opf_result.ncx_href {
+@@ -386,6 +387,9 @@
+         Ok(Event::Start(ref e)) => {
+             let tag = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+             match tag.as_str() {
++                "navpoint" => {
++                    if nav_point_depth == 0 { nav_point_depth = 1; } else { nav_point_depth += 1; }
++                }
+                 "content" => {
+                     for attr in e.attributes().flatten() {
+                         let name = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+@@ -398,6 +402,9 @@
+                 "navlabel" => {
+                     in_navlabel = true;
+                     current_label = None;
++                }
++                "text" if in_navlabel => {
++                    if nav_point_depth == 1 { in_text = true; }
++                }
+                 _ => {}
+             }
+         }
+@@ -416,6 +423,9 @@
+                 Ok(Event::End(ref e)) => {
+                     let tag = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+                     match tag.as_str() {
++                        "navpoint" => {
++                            if nav_point_depth > 0 { nav_point_depth -= 1; }
++                        }
+                         "navpoint" => {
+                             if let (Some(src), Some(label)) = (&current_src, &current_label) {
+                                 let href = if let Some(hash_idx) = src.find('#') {
+@@ -423,6 +433,9 @@
+                                     } else {
+                                         src.clone()
+                                     };
+                                 ncx_titles.insert(href, label.trim().to_string());
+                             }
+                             current_src = None;
+                             current_label = None;
++                        }
+                         "navlabel" => in_navlabel = false,
+                         "text" => in_text = false,
+                     }
+                 }
+*** End Patch

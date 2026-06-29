@@ -1,0 +1,13 @@
+D:\EInkReader\rust\einkreader-core\target\debug\deps\libc-43231006db61dceb.d: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\macros.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\new\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\new\common\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\new\ucrt\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\primitives.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\windows\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\windows\msvc\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\types.rs
+
+D:\EInkReader\rust\einkreader-core\target\debug\deps\liblibc-43231006db61dceb.rmeta: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\macros.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\new\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\new\common\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\new\ucrt\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\primitives.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\windows\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\windows\msvc\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\types.rs
+
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\lib.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\macros.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\new\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\new\common\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\new\ucrt\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\primitives.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\windows\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\windows\msvc\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\libc-0.2.186\src\types.rs:

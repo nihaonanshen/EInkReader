@@ -1,0 +1,10 @@
+D:\EInkReader\rust\einkreader-core\target\debug\deps\windows_sys-7f8579cdff3569a1.d: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\Windows\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\Windows\Win32\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\Windows\Win32\Globalization\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\core\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\core\literals.rs
+
+D:\EInkReader\rust\einkreader-core\target\debug\deps\libwindows_sys-7f8579cdff3569a1.rmeta: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\Windows\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\Windows\Win32\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\Windows\Win32\Globalization\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\core\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\core\literals.rs
+
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\lib.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\Windows\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\Windows\Win32\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\Windows\Win32\Globalization\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\core\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\windows-sys-0.45.0\src\core\literals.rs:

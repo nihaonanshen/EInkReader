@@ -1,0 +1,15 @@
+*.iml
+.gradle
+build/
+app/build/
+local.properties
+.idea/
+.DS_Store
+.cxx/
+*.apk
+*.aab
+*.jks
+*.keystore
+
+# Reasonix workspace files
+.reasonix/

@@ -1,0 +1,15 @@
+D:\EInkReader\rust\einkreader-core\target\debug\deps\regex-213309577778237c.d: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\builders.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\bytes.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\error.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\find_byte.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regex\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regex\bytes.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regex\string.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regexset\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regexset\bytes.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regexset\string.rs
+
+D:\EInkReader\rust\einkreader-core\target\debug\deps\libregex-213309577778237c.rmeta: C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\lib.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\builders.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\bytes.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\error.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\find_byte.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regex\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regex\bytes.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regex\string.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regexset\mod.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regexset\bytes.rs C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regexset\string.rs
+
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\lib.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\builders.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\bytes.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\error.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\find_byte.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regex\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regex\bytes.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regex\string.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regexset\mod.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regexset\bytes.rs:
+C:\Users\xk\.cargo\registry\src\rsproxy.cn-e3de039b2554c837\regex-1.12.4\src\regexset\string.rs:

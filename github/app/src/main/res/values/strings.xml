@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">墨水屏阅读器</string>
+    <string name="reader">阅读</string>
+    <string name="settings">设置</string>
+    <string name="library">书库</string>
+    <string name="btn_import">导入</string>
+    <string name="exit">退出</string>
+    <string name="about">关于</string>
+    <string name="btn_back">返回</string>
+    <string name="btn_toc">目录</string>
+    <string name="btn_settings">设置</string>
+    <string name="btn_refresh">刷新</string>
+    <string name="chapter">第%d章</string>
+    <string name="prologue">引子</string>
+    <string name="last_chapter">已经是第一章了</string>
+    <string name="next_chapter">已经是最后一章了</string>
+</resources>

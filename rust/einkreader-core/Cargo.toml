@@ -1,0 +1,30 @@
+[package]
+name = "einkreader-core"
+version = "0.1.0"
+edition = "2021"
+description = "EInkReader native core - encoding detection, TXT/EPUB parsing, page layout"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "einkreader_core"
+
+[dependencies]
+jni = { version = "0.21", features = ["invocation"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+encoding_rs = "0.8"
+regex = "1"
+zip = "2"
+quick-xml = "0.37"
+base64 = "0.22"
+lazy_static = "1"
+urlencoding = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+lto = true
+opt-level = "z"
+strip = true
+codegen-units = 1
