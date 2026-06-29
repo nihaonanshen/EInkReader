@@ -61,6 +61,8 @@ cd EInkReader
 | 语言 | Java 8 |
 | UI | 纯 Canvas 绘制（无 WebView） |
 
+---
+
 ## 项目结构
 
 ```
@@ -89,6 +91,8 @@ app/src/main/java/com/einkreader/
     └── EncodingDetector.java     # 文本编码检测
 ```
 
+---
+
 ## 开发背景
 
 这个项目的作者是 Android 开发的零基础新手，完全依靠 AI 编程助手来完成代码编写。整个过程展示了 AI 辅助编程的可能性——从零开始构建一个功能完整的 Android 应用。
@@ -99,10 +103,6 @@ app/src/main/java/com/einkreader/
 3. 构建 APK 安装到墨水屏设备上测试  
 4. 发现 Bug 后描述现象，AI 定位并修复  
 5. 功能迭代：从基本阅读到书架管理、搜索、夜间模式等  
-
-## 最近更新
-
-- 2026-06-29：将代码推送到 GitHub 仓库 nihaonanshen/EInkReader（使用个人访问令牌推送），并更新了此 README 以记录推送过程。
 
 ---
 
