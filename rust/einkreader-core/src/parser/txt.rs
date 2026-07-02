@@ -6,6 +6,7 @@
 //! 3. 英文 Chapter 格式支持
 //! 4. 无标题时按字数分割
 
+use once_cell::sync::Lazy;
 use regex::Regex;
 use std::fs;
 use std::path::Path;
@@ -46,16 +47,19 @@ impl ChapterPatterns {
                 r"^\s*第[零一二三四五六七八九十百千万亿\d]{1,8}[章节回卷集篇部折]"
             ).unwrap(),
             english: Regex::new(
-                r"^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module|lecture)[.\-:\s]*[\d一二三四五六七八九十百千]+(?:[.\-:\s]+.*)?$"
+                // 允许阿拉伯数字或英文单词数字（One/Two/One Hundred 等）
+                r"^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module|lecture)[.\-:\s]+(\d+|[a-z]+(?:\s[a-z]+){0,3})[.\-:\s]*(?:[A-Za-z].*)?[\s\u{3000}]*$"
             ).unwrap(),
             volume: Regex::new(
                 r"^(?i)(volume|vol)\s*\.?\s*[\d]+(?:[.:\s]+.*)?$"
             ).unwrap(),
             special: Regex::new(
-                r"^[\s\u{3000}]*(?:楔子|序章|序言|引子|前言|前奏|序幕|开篇|开场|写在前面|题记)[\s\u{3000}]*$|^[\s\u{3000}]*(?:后记|尾声|终章|结局|尾声|结语|番外|外传|特别篇|附录|附注)[\s\u{3000}]*$"
+                // 允许副标题，如 "楔子 暗夜降临"、"番外 午夜"
+                r"^[\s\u{3000}]*(?:楔子|序章|序言|引子|前言|前奏|序幕|开篇|开场|写在前面|题记)[\s\u{3000}]*(?:[\S　].*)?[\s\u{3000}]*$|^[\s\u{3000}]*(?:后记|尾声|终章|结局|结语|番外|外传|特别篇|附录|附注|致谢)[\s\u{3000}]*(?:[\S　].*)?[\s\u{3000}]*$"
             ).unwrap(),
+            // 收紧：编号最多 3 位，且必须跟着中文字，避免把列表序号当章节
             numeric: Regex::new(
-                r"^[\s\u{3000}]*(?:[零一二三四五六七八九十百千万亿]+|[\d]+)[、．.\s　](?:[\u{4e00}-\u{9fff}]{1,30})?[\s\u{3000}]*$"
+                r"^[\s\u{3000}]*(?:[零一二三四五六七八九十百千万亿]{1,3}|\d{1,3})[、．.\s　][\u{4e00}-\u{9fff}]{1,30}[\s\u{3000}]*$"
             ).unwrap(),
             decorated: Regex::new(
                 r"^[\s\u{3000}]*[\u{2500}-\u{257F}◆◇◎▲△▽▼○●□■☆★※＊*#_\-　]{0,15}第[零一二三四五六七八九十百千万亿\d]{1,8}[章节回卷集篇部折].*$"
@@ -75,14 +79,30 @@ impl ChapterPatterns {
         if trimmed.len() > 80 {
             return false;
         }
-        self.full.is_match(line)
-            || self.loose.is_match(line)
-            || self.english.is_match(line)
-            || self.special.is_match(line)
-            || self.volume.is_match(line)
-            || self.numeric.is_match(line)
-            || self.decorated.is_match(line)
-            || (trimmed.len() < 50 && self.anywhere.is_match(line))
+        self.full.is_match(trimmed)
+            || self.loose.is_match(trimmed)
+            || self.english.is_match(trimmed)
+            || self.special.is_match(trimmed)
+            || self.volume.is_match(trimmed)
+            || self.numeric.is_match(trimmed)
+            || self.decorated.is_match(trimmed)
+            || self.anywhere.is_match(trimmed)
+    }
+
+    /// 严格模式：只匹配"第X章"完整/宽松版、英文 Chapter 版、特殊关键词类标题。
+    /// 排除 volume/numeric/decorated/anywhere 等易误判的宽松规则。
+    fn is_strict_chapter_title(&self, line: &str) -> bool {
+        if line.is_empty() {
+            return false;
+        }
+        let trimmed = line.trim();
+        if trimmed.len() > 80 {
+            return false;
+        }
+        self.full.is_match(trimmed)
+            || self.loose.is_match(trimmed)
+            || self.english.is_match(trimmed)
+            || self.special.is_match(trimmed)
     }
 
     fn extract_title(&self, line: &str) -> String {
@@ -108,25 +128,38 @@ impl ChapterPatterns {
     }
 }
 
+/// 判断章节密度是否可疑（相邻章节间隔 < 3 行占比过高）
+fn has_suspicious_density(chapter_breaks: &[(usize, usize)]) -> bool {
+    if chapter_breaks.len() < 10 {
+        return false;
+    }
+    let mut short_gap = 0usize;
+    let mut total_gap = 0usize;
+    for w in chapter_breaks.windows(2) {
+        let gap = w[1].0.saturating_sub(w[0].0);
+        if gap == 0 {
+            continue;
+        }
+        total_gap += 1;
+        if gap < 3 {
+            short_gap += 1;
+        }
+    }
+    // 超过 30% 的相邻章节间隔 < 3 行，疑似误判
+    total_gap > 0 && short_gap * 100 > total_gap * 30
+}
+
 /// 清理标题中的装饰字符
 fn clean_title(title: &str) -> String {
+    static RE_LEAD: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[【\[\-―※（(]+").unwrap());
+    static RE_TRAIL: Lazy<Regex> = Lazy::new(|| Regex::new(r"[】\]\-―※）)]+$").unwrap());
+    static RE_END: Lazy<Regex> = Lazy::new(|| Regex::new(r"[（(][完上中下续终]?[）)]$").unwrap());
+    static RE_SPACES: Lazy<Regex> = Lazy::new(|| Regex::new(r"[\s\u{3000}]+").unwrap());
     let mut cleaned = title.trim().to_string();
-    cleaned = regex::Regex::new(r"^[【\[\-―※（(]+")
-        .unwrap()
-        .replace_all(&cleaned, "")
-        .to_string();
-    cleaned = regex::Regex::new(r"[】\]\-―※）)]+$")
-        .unwrap()
-        .replace_all(&cleaned, "")
-        .to_string();
-    cleaned = regex::Regex::new(r"[（(][完上中下续终]?[）)]$")
-        .unwrap()
-        .replace_all(&cleaned, "")
-        .to_string();
-    cleaned = regex::Regex::new(r"[\s\u{3000}]+")
-        .unwrap()
-        .replace_all(&cleaned, " ")
-        .to_string();
+    cleaned = RE_LEAD.replace_all(&cleaned, "").to_string();
+    cleaned = RE_TRAIL.replace_all(&cleaned, "").to_string();
+    cleaned = RE_END.replace_all(&cleaned, "").to_string();
+    cleaned = RE_SPACES.replace_all(&cleaned, " ").to_string();
     cleaned.trim().to_string()
 }
 
@@ -179,9 +212,11 @@ pub fn parse_txt_bytes(
     let mut chapter_breaks: Vec<(usize, usize)> = Vec::new(); // (start_line, end_line)
     let mut chapter_titles: Vec<Option<String>> = Vec::new();
 
+    let mut detected_count = 0usize;
     for li in 0..line_count {
         let line_text = extract_line(&full_text, &line_offsets, li);
         if patterns.is_chapter_title(&line_text) {
+            detected_count += 1;
             if chapter_breaks.is_empty() && li > 0 {
                 chapter_breaks.push((0, li));
                 chapter_titles.push(None);
@@ -191,6 +226,27 @@ pub fn parse_txt_bytes(
             }
             chapter_breaks.push((li + 1, usize::MAX));
             chapter_titles.push(Some(clean_title(&patterns.extract_title(&line_text))));
+        }
+    }
+
+    // ★ 后处理：如果检测到的章节数量异常多，或相邻章节间隔过少，
+    // 切换到严格模式重新识别（防止正文里 "第一章" 字样造成大量误判）
+    if detected_count > 200 || has_suspicious_density(&chapter_breaks) {
+        chapter_breaks.clear();
+        chapter_titles.clear();
+        for li in 0..line_count {
+            let line_text = extract_line(&full_text, &line_offsets, li);
+            if patterns.is_strict_chapter_title(&line_text) {
+                if chapter_breaks.is_empty() && li > 0 {
+                    chapter_breaks.push((0, li));
+                    chapter_titles.push(None);
+                } else if !chapter_breaks.is_empty() {
+                    let prev_end = &mut chapter_breaks.last_mut().unwrap().1;
+                    *prev_end = li;
+                }
+                chapter_breaks.push((li + 1, usize::MAX));
+                chapter_titles.push(Some(clean_title(&patterns.extract_title(&line_text))));
+            }
         }
     }
 
@@ -293,8 +349,12 @@ fn try_decode(bytes: &[u8], encoding: &str, file_path: &str) -> Result<String, S
             // 替换字符过多，尝试下一个编码
             return try_fallback_decode(bytes, encoding);
         }
-        if total > 500 && chinese == 0 && replacements == 0 {
-            // 无中文也无替换——可能是英文或其他，接受
+        if total > 200 && chinese == 0 {
+            let ascii_count = text.chars().take(10000).filter(|c| c.is_ascii()).count();
+            // 无中文又不是纯 ASCII（< 90%），大概率解码错了
+            if ascii_count * 100 < total.max(1) * 90 {
+                return try_fallback_decode(bytes, encoding);
+            }
         }
         return Ok(text.to_string());
     }
@@ -438,5 +498,37 @@ mod tests {
     fn test_clean_title() {
         assert_eq!(clean_title("【第一章】"), "第一章");
         assert_eq!(clean_title("第一章　初入江湖"), "第一章 初入江湖");
+    }
+
+    #[test]
+    fn test_no_false_positives() {
+        let patterns = ChapterPatterns::new();
+        // 正文里包含"第一章"字样的普通行，不应被误判
+        assert!(!patterns.is_chapter_title(
+            "这本书的主题是第二章至第五章，主线情节令人回味无穷"
+        ));
+        assert!(!patterns.is_chapter_title("这是一个普通的正文段落"));
+        assert!(!patterns.is_chapter_title("1. 首先，我们需要准备好所有材料"));
+        assert!(!patterns.is_chapter_title("3. 然后，将混合物搅拌均匀"));
+    }
+
+    #[test]
+    fn test_special_with_subtitle() {
+        let patterns = ChapterPatterns::new();
+        assert!(patterns.is_chapter_title("楔子 暗夜降临"));
+        assert!(patterns.is_chapter_title("番外 午夜"));
+        assert!(patterns.is_chapter_title("后记 写在最后"));
+        assert!(patterns.is_chapter_title("附录 参考书目"));
+    }
+
+    #[test]
+    fn test_suspicious_density() {
+        // 间隔很短（1 行）的连续章节，应被识别为"密度可疑"
+        let breaks: Vec<(usize, usize)> = (0..20).map(|i| (i * 2, i * 2 + 1)).collect();
+        assert!(has_suspicious_density(&breaks));
+
+        // 间隔较大（100 行）的，不应被识别为可疑
+        let breaks2: Vec<(usize, usize)> = (0..20).map(|i| (i * 100, i * 100 + 1)).collect();
+        assert!(!has_suspicious_density(&breaks2));
     }
 }

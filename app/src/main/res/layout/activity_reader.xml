@@ -1,85 +1,380 @@
 <?xml version="1.0" encoding="utf-8"?>
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android" android:focusable="true" android:focusableInTouchMode="true"
-    android:layout_width="match_parent" android:layout_height="match_parent"
-    android:background="@android:color/white">
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root_container"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/white">
 
-    <!-- 核心阅读控件（自定义 View） -->
+    <!-- 阅读内容：铺满整屏 -->
     <com.einkreader.ui.reader.ReaderView
         android:id="@+id/reader_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- 顶部状态栏（翻页时显示） -->
-    <LinearLayout android:id="@+id/top_status_bar"
-        android:layout_width="match_parent" android:layout_height="42dp"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:background="@android:color/white"
-        android:visibility="gone"
-        android:paddingLeft="12dp" android:paddingRight="12dp">
-
-        <TextView android:id="@+id/status_time"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:textColor="@android:color/black" android:textSize="16sp" />
-
-        <TextView android:id="@+id/status_chapter"
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:gravity="center"
-            android:singleLine="true" android:ellipsize="end"
-            android:textColor="@android:color/black" android:textSize="16sp" />
-
-        <TextView android:id="@+id/status_page"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:textColor="@android:color/black" android:textSize="16sp"
-            android:paddingRight="8dp" />
-
-        <TextView android:id="@+id/status_battery"
-            android:layout_width="wrap_content" android:layout_height="wrap_content"
-            android:textColor="@android:color/black" android:textSize="16sp" />
-    </LinearLayout>
-
-    <!-- 底部菜单栏 -->
-    <LinearLayout android:id="@+id/bottom_menu"
-        android:layout_width="match_parent" android:layout_height="56dp"
-        android:layout_gravity="bottom"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:background="@android:color/white"
-        android:clickable="true" android:focusable="true"
+    <!-- 全屏加载覆盖层（白底大字，墨水屏可见） -->
+    <LinearLayout
+        android:id="@+id/loading_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="center"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="@color/white"
         android:visibility="gone">
 
-        <TextView android:id="@+id/btn_back"
-            android:layout_width="0dp" android:layout_height="match_parent"
-            android:layout_weight="1" android:gravity="center"
-            android:text="返回" android:textColor="@android:color/black"
-            android:textSize="16sp" android:clickable="true" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="正在加载"
+            android:textColor="@color/black"
+            android:textSize="32sp"
+            android:textStyle="bold" />
 
-        <TextView android:id="@+id/btn_toc"
-            android:layout_width="0dp" android:layout_height="match_parent"
-            android:layout_weight="1" android:gravity="center"
-            android:text="目录" android:textColor="@android:color/black"
-            android:textSize="16sp" android:clickable="true" />
+        <TextView
+            android:id="@+id/loading_filename"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text=""
+            android:textColor="@color/black"
+            android:textSize="20sp"
+            android:gravity="center"
+            android:maxLines="3"
+            android:ellipsize="end" />
 
-        <TextView android:id="@+id/btn_font_minus"
-            android:layout_width="0dp" android:layout_height="match_parent"
-            android:layout_weight="1" android:gravity="center"
-            android:text="A-" android:textColor="@android:color/black"
-            android:textSize="16sp" android:clickable="true" />
-
-        <TextView android:id="@+id/btn_font_plus"
-            android:layout_width="0dp" android:layout_height="match_parent"
-            android:layout_weight="1" android:gravity="center"
-            android:text="A+" android:textColor="@android:color/black"
-            android:textSize="16sp" android:clickable="true" />
-
-        <TextView android:id="@+id/btn_settings"
-            android:layout_width="0dp" android:layout_height="match_parent"
-            android:layout_weight="1" android:gravity="center"
-            android:text="设置" android:textColor="@android:color/black"
-            android:textSize="16sp" android:clickable="true" />
-
-        <TextView android:id="@+id/btn_night"
-            android:layout_width="0dp" android:layout_height="match_parent"
-            android:layout_weight="1" android:gravity="center"
-            android:text="夜间" android:textColor="@android:color/black"
-            android:textSize="16sp" android:clickable="true" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="请稍候..."
+            android:textColor="@color/text_secondary"
+            android:textSize="24sp" />
     </LinearLayout>
+
+    <!-- 全屏目录 / 书签覆盖层 -->
+    <RelativeLayout
+        android:id="@+id/full_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/white"
+        android:visibility="gone">
+
+        <!-- 顶部标题栏 -->
+        <RelativeLayout
+            android:id="@+id/full_overlay_header"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_alignParentTop="true"
+            android:background="@color/primary"
+            android:paddingLeft="16dp"
+            android:paddingRight="16dp">
+
+            <TextView
+                android:id="@+id/full_overlay_back"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_alignParentLeft="true"
+                android:layout_centerVertical="true"
+                android:text="← 返回"
+                android:textColor="@color/white"
+                android:textSize="14sp"
+                android:padding="8dp" />
+
+            <TextView
+                android:id="@+id/full_overlay_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_centerInParent="true"
+                android:text="目录"
+                android:textColor="@color/white"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+        </RelativeLayout>
+
+        <!-- 全屏目录列表（翻页模式） -->
+        <FrameLayout
+            android:id="@+id/full_toc_container"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_below="@id/full_overlay_header"
+            android:background="@color/white"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/full_toc_text"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="16dp"
+                android:textColor="@color/black"
+                android:textSize="18sp"
+                android:lineSpacingExtra="8dp" />
+
+            <TextView
+                android:id="@+id/full_toc_page"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|center_horizontal"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
+                android:paddingBottom="8dp" />
+        </FrameLayout>
+
+        <!-- 全屏书签列表（翻页模式） -->
+        <FrameLayout
+            android:id="@+id/full_bookmark_container"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_below="@id/full_overlay_header"
+            android:background="@color/white"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/full_bookmark_text"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:padding="16dp"
+                android:textColor="@color/black"
+                android:textSize="18sp"
+                android:lineSpacingExtra="8dp" />
+
+            <TextView
+                android:id="@+id/full_bookmark_page"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="bottom|center_horizontal"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
+                android:paddingBottom="8dp" />
+        </FrameLayout>
+    </RelativeLayout>
+
+    <!-- 顶部状态栏（白底黑字，紧凑分格） -->
+    <LinearLayout
+        android:id="@+id/top_status_bar"
+        android:layout_width="match_parent"
+        android:layout_height="32dp"
+        android:layout_gravity="top"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@color/white"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/status_time"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:textColor="@color/black"
+            android:textSize="13sp" />
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="20dp"
+            android:background="@color/black" />
+
+        <TextView
+            android:id="@+id/status_chapter"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="3"
+            android:gravity="center"
+            android:textColor="@color/black"
+            android:textSize="13sp"
+            android:singleLine="true"
+            android:ellipsize="end"
+            android:paddingLeft="6dp"
+            android:paddingRight="6dp" />
+
+        <View
+            android:layout_width="1dp"
+            android:layout_height="20dp"
+            android:background="@color/black" />
+
+        <TextView
+            android:id="@+id/status_battery"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center"
+            android:textColor="@color/black"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <!-- 底部菜单栏（纯白 + 黑字 + 竖线分隔，双行常驻） -->
+    <LinearLayout
+        android:id="@+id/bottom_menu"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:background="@color/white"
+        android:visibility="gone">
+
+        <!-- 第一行：导航和功能 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/btn_back"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="返回"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+
+            <TextView
+                android:id="@+id/btn_toc"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="目录"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+
+            <TextView
+                android:id="@+id/btn_bookmark"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="书签"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+
+            <TextView
+                android:id="@+id/btn_settings"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="设置"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+
+            <TextView
+                android:id="@+id/btn_show_log"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="日志"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <!-- 分隔线 -->
+        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/black" />
+
+        <!-- 第二行：字号和亮度快捷按钮 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/btn_font_minus"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="字小"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+
+            <TextView
+                android:id="@+id/btn_font_plus"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="字大"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+
+            <TextView
+                android:id="@+id/btn_bright_minus"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="亮-"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+
+            <TextView
+                android:id="@+id/btn_bright_plus"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="亮+"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+
+            <TextView
+                android:id="@+id/btn_full_refresh"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:gravity="center"
+                android:text="全刷"
+                android:textColor="@color/black"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <!-- 分隔线 -->
+        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/black" />
+
+        <!-- 进度条 + 页码 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingLeft="12dp"
+            android:paddingRight="12dp">
+
+            <TextView
+                android:id="@+id/progress_label"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0 / 0"
+                android:textColor="@color/text_secondary"
+                android:textSize="12sp" />
+
+            <SeekBar
+                android:id="@+id/progress_seekbar"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginLeft="10dp"
+                android:layout_marginRight="10dp"
+                android:max="1000" />
+        </LinearLayout>
+    </LinearLayout>
+
 </FrameLayout>

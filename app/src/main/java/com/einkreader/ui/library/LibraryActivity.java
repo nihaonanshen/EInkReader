@@ -13,7 +13,10 @@ import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.einkreader.EInkReaderApp;
 import com.einkreader.R;
+import com.einkreader.core.storage.BookStorage;
+import com.einkreader.ui.reader.DebugLog;
 import com.einkreader.ui.settings.AboutActivity;
 
 import java.io.File;
@@ -53,12 +56,12 @@ public class LibraryActivity extends Activity {
         btnImport = (TextView) findViewById(R.id.btn_import);
         btnRefreshSettings = (TextView) findViewById(R.id.btn_refresh_settings);
         btnAbout = (TextView) findViewById(R.id.btn_about);
-        TextView btnLog = (TextView) findViewById(R.id.btn_log);
-        btnLog.setOnClickListener(new View.OnClickListener() {
+
+        TextView btnRecent = (TextView) findViewById(R.id.btn_recent);
+        btnRecent.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View v) {
-                Intent intent = new Intent(LibraryActivity.this, com.einkreader.ui.reader.DebugLogActivity.class);
-                startActivity(intent);
+                showRecentBooks();
             }
         });
 
@@ -88,6 +91,10 @@ public class LibraryActivity extends Activity {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             book.file.delete();
+                            BookStorage storage = EInkReaderApp.getBookStorage();
+                            if (storage != null) {
+                                storage.deleteBook(book.fileKey);
+                            }
                             scanBooks();
                         }
                     })
@@ -145,9 +152,33 @@ public class LibraryActivity extends Activity {
 
     /**
      * 扫描 SD 卡上的书籍
+     *
+     * 策略：
+     * 1. 先从数据库读取已知书籍（包含阅读进度元信息）
+     * 2. 再扫描文件系统，把新增书籍合并进来（用 fileKey 去重）
+     * 3. 对扫描路径失效（文件已被删除）的数据库记录进行清理
      */
     private void scanBooks() {
         books.clear();
+
+        // 从数据库加载已知书籍
+        BookStorage storage = EInkReaderApp.getBookStorage();
+        java.util.HashMap<String, BookInfo> dbMap = new java.util.HashMap<String, BookInfo>();
+        if (storage != null) {
+            List<BookStorage.BookRecord> dbBooks = storage.listAllBooks();
+            for (BookStorage.BookRecord rec : dbBooks) {
+                File f = new File(rec.filePath);
+                if (!f.exists()) {
+                    // 文件已被删除，清理数据库记录
+                    storage.deleteBook(rec.fileKey);
+                    DebugLog.log("Lib", "清理失效记录: " + rec.filePath);
+                    continue;
+                }
+                BookInfo info = new BookInfo(f);
+                info.dbRecord = rec;
+                dbMap.put(rec.fileKey, info);
+            }
+        }
 
         // 从设置读取上次的书籍目录，没有则用默认目录
         SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
@@ -173,22 +204,20 @@ public class LibraryActivity extends Activity {
         java.util.HashSet<String> seenPaths = new java.util.HashSet<String>();
         for (File dir : searchDirs) {
             if (dir.exists() && dir.isDirectory()) {
-                scanDir(dir, seenPaths);
+                scanDir(dir, seenPaths, dbMap);
             }
         }
 
-        com.einkreader.ui.reader.DebugLog.log("Lib", "扫描完成: " + books.size() + "本书 排序模式=" + currentSortMode + "(" + (currentSortMode == 0 ? "时间" : currentSortMode == 1 ? "名称" : "格式") + ")");
+        books.addAll(dbMap.values());
 
         // 按当前排序模式排序
         if (currentSortMode == 1) {
-            // 按文件名排序
             java.util.Collections.sort(books, new Comparator<BookInfo>() {
                 @Override public int compare(BookInfo a, BookInfo b) {
                     return a.title.compareToIgnoreCase(b.title);
                 }
             });
         } else if (currentSortMode == 2) {
-            // 按格式排序（EPUB 在前，TXT 在后，再按文件名）
             java.util.Collections.sort(books, new Comparator<BookInfo>() {
                 @Override public int compare(BookInfo a, BookInfo b) {
                     String extA = a.file.getName().toLowerCase();
@@ -198,16 +227,26 @@ public class LibraryActivity extends Activity {
                     return a.title.compareToIgnoreCase(b.title);
                 }
             });
+        } else {
+            // 按时间：最近阅读的在前
+            java.util.Collections.sort(books, new Comparator<BookInfo>() {
+                @Override public int compare(BookInfo a, BookInfo b) {
+                    long ta = a.dbRecord != null ? a.dbRecord.lastReadTime : a.file.lastModified();
+                    long tb = b.dbRecord != null ? b.dbRecord.lastReadTime : b.file.lastModified();
+                    return Long.compare(tb, ta);
+                }
+            });
         }
-        // 0=按时间（已在 scanDir 中按修改时间排序）
 
+        DebugLog.log("Lib", "扫描完成: " + books.size() + "本书 排序模式=" + currentSortMode);
         adapter.notifyDataSetChanged();
     }
 
     /**
-     * 扫描单个目录下的书籍
+     * 扫描单个目录下的书籍，结果合并到 dbMap（已存在的不覆盖）
      */
-    private void scanDir(File dir, java.util.HashSet<String> seenPaths) {
+    private void scanDir(File dir, java.util.HashSet<String> seenPaths,
+                         java.util.HashMap<String, BookInfo> dbMap) {
         File[] files = dir.listFiles(new FileFilter() {
             @Override
             public boolean accept(File file) {
@@ -222,7 +261,6 @@ public class LibraryActivity extends Activity {
 
         if (files == null) return;
 
-        // 按修改时间排序（最新的在前）
         Arrays.sort(files, new Comparator<File>() {
             @Override
             public int compare(File a, File b) {
@@ -234,9 +272,70 @@ public class LibraryActivity extends Activity {
             String absPath = file.getAbsolutePath();
             if (!seenPaths.contains(absPath)) {
                 seenPaths.add(absPath);
-                books.add(new BookInfo(file));
+                BookInfo info = new BookInfo(file);
+                if (!dbMap.containsKey(info.fileKey)) {
+                    dbMap.put(info.fileKey, info);
+                }
             }
         }
+    }
+
+    /**
+     * 显示最近阅读的书籍（按 lastReadTime 降序取前 10 本）
+     */
+    private void showRecentBooks() {
+        java.util.ArrayList<BookInfo> recent = new java.util.ArrayList<BookInfo>();
+        long now = System.currentTimeMillis();
+        for (BookInfo b : books) {
+            long t = b.dbRecord != null ? b.dbRecord.lastReadTime : 0;
+            if (t > 0 && t <= now) {
+                recent.add(b);
+            }
+        }
+        java.util.Collections.sort(recent, new Comparator<BookInfo>() {
+            @Override public int compare(BookInfo a, BookInfo b) {
+                long ta = a.dbRecord != null ? a.dbRecord.lastReadTime : 0;
+                long tb = b.dbRecord != null ? b.dbRecord.lastReadTime : 0;
+                return Long.compare(tb, ta);
+            }
+        });
+        if (recent.isEmpty()) {
+            AlertDialog.Builder ab = new AlertDialog.Builder(this);
+            ab.setTitle("最近阅读");
+            ab.setMessage("暂无阅读记录。打开一本书阅读后即可在此处快速返回。");
+            ab.setPositiveButton("好的", null);
+            ab.show();
+            return;
+        }
+        final BookInfo[] items = recent.toArray(new BookInfo[0]);
+        CharSequence[] labels = new CharSequence[items.length];
+        for (int i = 0; i < items.length; i++) {
+            labels[i] = items[i].title + "  ·  " + formatTime(items[i].dbRecord.lastReadTime);
+        }
+        AlertDialog.Builder ab = new AlertDialog.Builder(this);
+        ab.setTitle("最近阅读");
+        ab.setItems(labels, new DialogInterface.OnClickListener() {
+            @Override public void onClick(DialogInterface dialog, int which) {
+                openBook(items[which].file);
+            }
+        });
+        ab.setNegativeButton("取消", null);
+        ab.show();
+    }
+
+    private static String formatTime(long t) {
+        long delta = System.currentTimeMillis() - t;
+        long sec = delta / 1000;
+        if (sec < 60) return "刚刚";
+        long min = sec / 60;
+        if (min < 60) return min + "分钟前";
+        long hour = min / 60;
+        if (hour < 24) return hour + "小时前";
+        long day = hour / 24;
+        if (day < 30) return day + "天前";
+        long month = day / 30;
+        if (month < 12) return month + "个月前";
+        return (day / 365) + "年前";
     }
 
     /**
@@ -296,11 +395,15 @@ public class LibraryActivity extends Activity {
      */
     static class BookInfo {
         File file;
+        String fileKey;
         String title;
         String info;
+        BookStorage.BookRecord dbRecord;
 
         BookInfo(File file) {
             this.file = file;
+            this.fileKey = file.getName() + "_" + file.length() + "_" + file.lastModified();
+
             String name = file.getName();
             int dot = name.lastIndexOf('.');
             this.title = (dot > 0) ? name.substring(0, dot) : name;

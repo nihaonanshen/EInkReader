@@ -13,6 +13,7 @@ import android.view.MotionEvent;
 import android.view.View;
 
 import com.einkreader.core.model.Chapter;
+import com.einkreader.core.Constants;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -56,6 +57,8 @@ public class ReaderView extends View {
     // ==================== 监听器 ====================
     private OnPageChangeListener pageChangeListener;
     private boolean isLayoutReady = false;
+    private boolean enableFirstLineIndent = false;  // ★ 默认关闭首行缩进，避免首行短造成"偏右"错觉
+    private boolean batchMode = false;  // ★ 批量更新模式：延迟 applySettings，避免重复 layoutPages
 
     // ==================== 绘图工具 ====================
     private Paint textPaint;
@@ -67,6 +70,15 @@ public class ReaderView extends View {
     private static final int ZONE_PREV = 0;
     private static final int ZONE_NEXT = 1;
     private static final int ZONE_MENU = 2;
+
+    // ==================== 防抖：防止墨水屏连续快速翻页导致屏幕闪烁 ====================
+    private long lastPageChangeTime = 0;
+    private static final long PAGE_DEBOUNCE_MS = 250L;
+
+    // ==================== 触摸跟踪 ====================
+    private float downX = 0;
+    private float downY = 0;
+    private int lastZone = ZONE_MENU;
 
     // ==================== 分页数据模型 ====================
 
@@ -126,23 +138,37 @@ public class ReaderView extends View {
     }
 
     private void init() {
-        setBackgroundColor(bgColor);
-        density = getResources().getDisplayMetrics().density;
+            setBackgroundColor(bgColor);
+            density = getResources().getDisplayMetrics().density;
+            int densityDpi = getResources().getDisplayMetrics().densityDpi;
+        
+            DebugLog.log("Init", "density=" + density + " densityDpi=" + densityDpi);
+        
+            // ★ 使用 dp 初始化 padding，右侧略大以缓冲抗锯齿外扩
+            float defaultDp = 10f;
+            float rightDp = 14f;  // 右侧多 4dp，防止文字边缘被裁切
+            paddingLeft = (int)(defaultDp * density + 0.5f);
+            paddingRight = (int)(rightDp * density + 0.5f);
+            paddingTop = (int)(defaultDp * density + 0.5f);
+            paddingBottom = (int)(defaultDp * density + 0.5f);
+        
+            DebugLog.log("Init", "padding: left=" + paddingLeft + " right=" + paddingRight + " top=" + paddingTop + " bottom=" + paddingBottom);
 
         // 文字画笔
         textPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         textPaint.setColor(fgColor);
         textPaint.setTypeface(typeface);
+        textPaint.setTextAlign(Paint.Align.LEFT);  // ★ 确保左对齐
 
         // 图片背景画笔
         imageBgPaint = new Paint();
         imageBgPaint.setColor(0xFFF0F0F0);
 
         // ★ I-2: 页码画笔（复用，避免每帧创建）
-        pageNumPaint = new Paint();
-        pageNumPaint.setColor(mutedColor);
-        pageNumPaint.setTextSize(14 * density);
-        pageNumPaint.setTextAlign(Paint.Align.CENTER);
+                pageNumPaint = new Paint();
+                pageNumPaint.setColor(mutedColor);
+                pageNumPaint.setTextSize(Constants.PAGE_NUMBER_TEXT_SIZE_SP * density);
+                pageNumPaint.setTextAlign(Paint.Align.CENTER);
     }
 
     // ==================== 公开设置方法 ====================
@@ -165,9 +191,34 @@ public class ReaderView extends View {
     public void setHorizontalMargin(int dp) {
         int px = (int)(dp * density + 0.5f);
         this.paddingLeft = px;
-        this.paddingRight = px;
+        // ★ 右侧多 4dp 安全余量，防止文字边缘被裁切（与 init() 保持一致）
+        this.paddingRight = (int)((dp + 4f) * density + 0.5f);
         applySettings();
     }
+
+    /**
+     * ★ 批量更新模式：开始批量设置
+     * 调用后所有 setter 只更新字段值，不触发 layoutPages
+     * 必须与 commitBatchUpdate() 配对使用
+     */
+    public void beginBatchUpdate() {
+        batchMode = true;
+    }
+
+    /**
+     * ★ 批量更新模式：提交批量设置
+     * 统一触发一次 layoutPages，避免重复分页
+     */
+    public void commitBatchUpdate() {
+        batchMode = false;
+        applySettings();
+    }
+
+    public void setFirstLineIndent(boolean enable) {
+        this.enableFirstLineIndent = enable;
+        applySettings();
+    }
+
     public void setCustomTypeface(Typeface tf) {
         this.typeface = (tf != null) ? tf : Typeface.DEFAULT;
         textPaint.setTypeface(this.typeface);
@@ -186,7 +237,9 @@ public class ReaderView extends View {
         }
         setBackgroundColor(bgColor);
         textPaint.setColor(fgColor);
-        applySettings();
+        pageNumPaint.setColor(mutedColor);
+        // ★ 夜间模式只改变颜色，不影响分页，无需 layoutPages
+        if (!batchMode) invalidate();
     }
 
     public void setChapterImages(Map<String, byte[]> images) {
@@ -200,8 +253,11 @@ public class ReaderView extends View {
 
     /**
      * 重新应用所有设置并重新分页
+     * ★ 批量模式下延迟执行（由 commitBatchUpdate 统一触发）
+     * ★ 位置恢复：layoutPages 内部会基于文字指纹恢复阅读位置
      */
     public void applySettings() {
+        if (batchMode) return;  // 批量模式下延迟
         if (currentChapter != null) {
             layoutPages();
             if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
@@ -229,6 +285,18 @@ public class ReaderView extends View {
     // ==================== 核心分页算法 ====================
 
     private void layoutPages() {
+        // ★ 保存当前页第一行文字指纹，用于重新分页后恢复阅读位置
+        // currentPage=0 时不保存（如 setChapter 新章节），避免错误恢复
+        String pageFingerprint = null;
+        if (currentPage > 0 && currentPage < pages.size()) {
+            Page cp = pages.get(currentPage);
+            if (cp != null && !cp.lines.isEmpty()) {
+                String t = cp.lines.get(0).text;
+                if (t != null && t.length() > 0) {
+                    pageFingerprint = t.substring(0, Math.min(24, t.length()));
+                }
+            }
+        }
         pages.clear();
 
         if (currentChapter == null) {
@@ -245,23 +313,31 @@ public class ReaderView extends View {
         }
 
         int viewWidth = getWidth();
-        int viewHeight = getHeight();
-        if (viewWidth <= 0 || viewHeight <= 0) {
-            totalPages = 0;
-            return;
-        }
-
-        int contentWidth = viewWidth - paddingLeft - paddingRight;
-        int contentHeight = viewHeight - paddingTop - paddingBottom;
-        if (contentWidth <= 0 || contentHeight <= 0) {
-            totalPages = 0;
-            return;
-        }
+                int viewHeight = getHeight();
+                if (viewWidth <= 0 || viewHeight <= 0) {
+                    DebugLog.log("Layout", "skip: view size not ready yet w=" + viewWidth + " h=" + viewHeight);
+                    totalPages = 0;
+                    return;
+                }
+        
+                DebugLog.log("Layout", "★★★ viewSize: " + viewWidth + "x" + viewHeight + ", padding: " + paddingLeft + "/" + paddingRight + "/" + paddingTop + "/" + paddingBottom);
+        
+                int contentWidth = viewWidth - paddingLeft - paddingRight;
+                int contentHeight = viewHeight - paddingTop - paddingBottom;
+        
+                DebugLog.log("Layout", "★★★ contentSize: " + contentWidth + "x" + contentHeight);
+        
+                if (contentWidth <= 0 || contentHeight <= 0) {
+                    totalPages = 0;
+                    return;
+                }
+        DebugLog.log("Layout", "calc: viewW=" + viewWidth + " padL=" + paddingLeft + " padR=" + paddingRight + " contentW=" + contentWidth);
 
         textPaint.setTextSize(textSize * density);
         Paint.FontMetrics pfm = textPaint.getFontMetrics();
         float lineHeight = (float) Math.ceil(pfm.descent - pfm.ascent) * lineSpacing;
         float paraSpacingPx = textSize * density * (paragraphSpacing - lineSpacing);
+        DebugLog.log("Layout", "metrics: textSizePx=" + (textSize * density) + " firstIndentEnabled=" + enableFirstLineIndent + " lineHeightPx=" + lineHeight);
 
         // 按段落分割
         String[] paragraphs = content.split("\n", -1);
@@ -289,7 +365,7 @@ public class ReaderView extends View {
             float paraExtraSpacing = paraSpacingPx;
             boolean isCentered = false;
             boolean isBold = false;
-            float firstLineIndent = paraTextSize * density; // 首行缩进1字
+            float firstLineIndent = enableFirstLineIndent ? paraTextSize * density : 0; // 首行缩进1字（默认关闭）
 
             switch (paraType) {
                 case com.einkreader.core.model.Chapter.PARA_H1:
@@ -365,18 +441,20 @@ public class ReaderView extends View {
             int actualContentWidth = contentWidth;
             float actualPaddingLeft = paddingLeft;
             if (paraType == com.einkreader.core.model.Chapter.PARA_BLOCKQUOTE) {
-                int indent = 0;
-                actualContentWidth = contentWidth - indent * 2;
-                actualPaddingLeft = paddingLeft + indent;
+                int indent = (int)(textSize * density * 2);
+                if (indent * 2 < contentWidth) {
+                    actualContentWidth = contentWidth - indent * 2;
+                    actualPaddingLeft = paddingLeft + indent;
+                }
             }
 
             // ★ 首行缩进：第一行用短宽度，后续行正常
             boolean hasIndent = (firstLineIndent > 0 && paraType == com.einkreader.core.model.Chapter.PARA_NORMAL);
             String remaining = trimmed;
-            if (hasIndent && !isCentered) {
-                int indentPx = (int)firstLineIndent;
-                if (indentPx < actualContentWidth - 10) {
-                    int shortWidth = actualContentWidth - indentPx;
+                        if (hasIndent && !isCentered) {
+                            int indentPx = (int)firstLineIndent;
+                            if (indentPx < actualContentWidth - Constants.MIN_INDENT_AVAILABLE_WIDTH_PX) {
+                                int shortWidth = actualContentWidth - indentPx;
                     List<String> firstOnly = wrapText(trimmed, shortWidth);
                     if (!firstOnly.isEmpty()) {
                         String firstLine = firstOnly.get(0);
@@ -434,11 +512,55 @@ public class ReaderView extends View {
             pages.add(new Page());
             totalPages = 1;
         }
+
+        // ★ 恢复阅读位置：查找文字指纹所在的新页码
+        if (pageFingerprint != null) {
+            int foundPage = -1;
+            for (int i = 0; i < pages.size(); i++) {
+                Page p = pages.get(i);
+                if (p != null && !p.lines.isEmpty()) {
+                    String t = p.lines.get(0).text;
+                    if (t != null && t.startsWith(pageFingerprint)) {
+                        foundPage = i;
+                        break;
+                    }
+                }
+            }
+            if (foundPage >= 0) {
+                currentPage = foundPage;
+                DebugLog.log("Layout", "位置恢复: fingerprint='" + pageFingerprint + "' -> page " + foundPage);
+            } else {
+                DebugLog.log("Layout", "位置恢复失败: fingerprint='" + pageFingerprint + "' 未找到");
+                if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
+            }
+        }
     }
 
     /**
      * 文字自动换行
+     *
+     * 策略：
+     * - 对 CJK 字符：逐字添加，每次用整行 measureText 校验，确保精度
+     * - 对拉丁字母：按单词宽度换行（遇空格时优先在空格处断开），超长 word 逐字截断
+     * - 混合场景：以当前段的整体第一个字符判定主要语言
+     *
+     * 精度保障：
+     * - 使用 measureText()（float 精度）而非 getTextBounds()（int 精度），避免取整误差
+     * - 每次添加字符后整行测量，杜绝逐字累加与整行渲染的偏差
+     * - TEXT_SAFETY_MARGIN 安全余量覆盖抗锯齿外扩
      */
+    private static final float TEXT_SAFETY_MARGIN = 3.0f;
+
+    private float measureCharWidth(char c) {
+        char[] buf = {c};
+        return textPaint.measureText(buf, 0, 1);
+    }
+
+    private float measureStringWidth(String s) {
+        if (s == null || s.isEmpty()) return 0f;
+        return textPaint.measureText(s);
+    }
+
     private List<String> wrapText(String text, int maxWidthPx) {
         List<String> lines = new ArrayList<String>();
         if (text == null || text.isEmpty()) {
@@ -446,26 +568,85 @@ public class ReaderView extends View {
             return lines;
         }
 
-        // 按字符逐个测量，遇到宽度超限则换行
-        StringBuilder currentLine = new StringBuilder();
-        float currentWidth = 0;
-        char[] charBuf = new char[1];
-
+        // 判定语言：跳过标点符号和空格，找第一个字母/汉字来判定
+        // ★ 修复：双引号 " (0x22) 等标点不应误判为非 CJK，否则中文对话开头的 " 会走英文模式导致不换行
+        boolean isCjkFirst = false;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
-            charBuf[0] = c;
-            // ★ I-1: 使用 char[] 避免每字符创建 String 对象
-            float charWidth = textPaint.measureText(charBuf, 0, 1);
-
-            if (currentWidth + charWidth > maxWidthPx && currentLine.length() > 0) {
-                // 换行
-                lines.add(currentLine.toString());
-                currentLine = new StringBuilder();
-                currentWidth = 0;
+            if ((c >= 0x4E00 && c <= 0x9FFF)
+                    || (c >= 0x3400 && c <= 0x4DBF)
+                    || (c >= 0x3040 && c <= 0x30FF)) {
+                isCjkFirst = true;
+                break;
+            } else if (Character.isLetterOrDigit(c)) {
+                // 第一个字母/数字是非 CJK → 英文模式
+                isCjkFirst = false;
+                break;
             }
+            // 标点符号、空格、引号等：继续找下一个实质字符
+        }
 
-            currentLine.append(c);
-            currentWidth += charWidth;
+        StringBuilder currentLine = new StringBuilder();
+
+        if (!isCjkFirst) {
+            // 英文模式：按空格分词，整行测量校验
+            String[] words = text.split(" ", -1);
+            for (int wi = 0; wi < words.length; wi++) {
+                String word = words[wi];
+                float wordWidth = measureStringWidth(word);
+
+                // ★ 超长 word 逐字符截断（无论 currentLine 是否为空，都要截断）
+                if (wordWidth + TEXT_SAFETY_MARGIN > maxWidthPx) {
+                    if (currentLine.length() > 0) {
+                        lines.add(currentLine.toString());
+                        currentLine.setLength(0);
+                    }
+                    for (int ci = 0; ci < word.length(); ci++) {
+                        char c = word.charAt(ci);
+                        currentLine.append(c);
+                        float actualWidth = measureStringWidth(currentLine.toString());
+                        if (actualWidth + TEXT_SAFETY_MARGIN > maxWidthPx && currentLine.length() > 1) {
+                            currentLine.deleteCharAt(currentLine.length() - 1);
+                            lines.add(currentLine.toString());
+                            currentLine.setLength(0);
+                            currentLine.append(c);
+                        }
+                    }
+                    continue;
+                }
+
+                // 正常 word：尝试添加到当前行
+                String tryLine = currentLine.length() > 0
+                        ? currentLine.toString() + " " + word
+                        : word;
+                float tryWidth = measureStringWidth(tryLine);
+
+                if (tryWidth + TEXT_SAFETY_MARGIN > maxWidthPx && currentLine.length() > 0) {
+                    // 当前行放不下，换行
+                    lines.add(currentLine.toString());
+                    currentLine.setLength(0);
+                    currentLine.append(word);
+                } else {
+                    // 放得下，更新 currentLine
+                    currentLine.setLength(0);
+                    currentLine.append(tryLine);
+                }
+            }
+        } else {
+            // CJK 模式：逐字添加 + 每次整行测量校验
+            // 不再用 currentWidth 累加（避免逐字测量与整行渲染的偏差），直接整行测量确保精度
+            for (int i = 0; i < text.length(); i++) {
+                char c = text.charAt(i);
+                currentLine.append(c);
+                float actualWidth = measureStringWidth(currentLine.toString());
+                if (actualWidth + TEXT_SAFETY_MARGIN > maxWidthPx && currentLine.length() > 1) {
+                    // 整行测量超出，回退最后一个字符到下一行
+                    currentLine.deleteCharAt(currentLine.length() - 1);
+                    lines.add(currentLine.toString());
+                    currentLine.setLength(0);
+                    currentLine.append(c);
+                }
+            }
         }
 
         // 最后一行
@@ -500,6 +681,11 @@ public class ReaderView extends View {
         // 背景色（日间白色省电/夜间黑色护眼）
         canvas.drawColor(bgColor);
 
+        if (!isLayoutReady || getWidth() <= 0 || getHeight() <= 0) {
+            DebugLog.log("Draw", "skip: layout not ready yet w=" + getWidth() + " h=" + getHeight());
+            return;
+        }
+
         DebugLog.log("Draw", "page=" + currentPage + "/" + totalPages + " lines=" + (pages.size() > currentPage && pages.get(currentPage) != null ? pages.get(currentPage).lines.size() : 0) + " imgs=" + (pages.size() > currentPage && pages.get(currentPage) != null ? pages.get(currentPage).images.size() : 0));
         if (pages.isEmpty() || currentPage >= pages.size()) return;
 
@@ -509,10 +695,15 @@ public class ReaderView extends View {
         textPaint.setColor(fgColor);
         textPaint.setTypeface(typeface);
 
+        int linesDrawn = 0;
         for (TextLine line : page.lines) {
             textPaint.setTextSize(line.fontSize * density);
             textPaint.setFakeBoldText(line.bold);
             canvas.drawText(line.text, line.x, line.y, textPaint);
+            linesDrawn++;
+        }
+        if (currentPage == 0 && linesDrawn > 0) {
+            DebugLog.log("Draw", "page0: lines=" + linesDrawn + " firstLine.x=" + page.lines.get(0).x + " text=" + page.lines.get(0).text.substring(0, Math.min(10, page.lines.get(0).text.length())) + "...");
         }
 
         // 绘制图片
@@ -535,6 +726,27 @@ public class ReaderView extends View {
     // ==================== 尺寸变化 ====================
 
     @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        int w = getMeasuredWidth();
+        int h = getMeasuredHeight();
+        if (w > 0 && h > 0 && (w != lastMeasuredW || h != lastMeasuredH)) {
+            lastMeasuredW = w;
+            lastMeasuredH = h;
+            isLayoutReady = true;
+            DebugLog.log("Measure", "onMeasure: w=" + w + " h=" + h + " pw=" + paddingLeft + " ph=" + paddingRight);
+            if (currentChapter != null) {
+                layoutPages();
+                invalidate();
+                notifyPageChanged();
+            }
+        }
+    }
+
+    private int lastMeasuredW = 0;
+    private int lastMeasuredH = 0;
+
+    @Override
     protected void onSizeChanged(int w, int h, int oldw, int oldh) {
         super.onSizeChanged(w, h, oldw, oldh);
         isLayoutReady = true;
@@ -548,35 +760,73 @@ public class ReaderView extends View {
     // ==================== 触摸翻页 ====================
 
     @Override
-    public boolean onTouchEvent(MotionEvent event) {
-        if (event.getAction() == MotionEvent.ACTION_UP) {
-            float x = event.getX();
-            float width = getWidth();
+    public boolean dispatchTouchEvent(MotionEvent event) {
+        float x = event.getX();
+        float y = event.getY();
+        float width = getWidth();
 
-            int zone;
+        int zone = ZONE_MENU;
+        if (width > 0) {
             if (x < width * 0.3f) {
                 zone = ZONE_PREV;
             } else if (x > width * 0.7f) {
                 zone = ZONE_NEXT;
-            } else {
-                zone = ZONE_MENU;
             }
-
-            switch (zone) {
-                case ZONE_PREV:
-                    prevPage();
-                    break;
-                case ZONE_NEXT:
-                    nextPage();
-                    break;
-                case ZONE_MENU:
-                    if (pageChangeListener != null) {
-                        pageChangeListener.onTapCenter();
-                    }
-                    break;
-            }
-            return true;
         }
+
+        switch (event.getAction()) {
+            case MotionEvent.ACTION_DOWN:
+                downX = x;
+                downY = y;
+                lastZone = zone;
+                return true;
+
+            case MotionEvent.ACTION_MOVE:
+                return true;
+
+            case MotionEvent.ACTION_CANCEL:
+                return true;
+
+            case MotionEvent.ACTION_UP:
+                float dx = Math.abs(x - downX);
+                float dy = Math.abs(y - downY);
+                if (dx > 25f || dy > 25f) {
+                    return true;
+                }
+
+                int upZone = (width > 0) ? zone : lastZone;
+
+                long now = System.currentTimeMillis();
+                switch (upZone) {
+                    case ZONE_PREV:
+                        if (tryConsumePageTurn(now)) prevPage();
+                        break;
+                    case ZONE_NEXT:
+                        if (tryConsumePageTurn(now)) nextPage();
+                        break;
+                    case ZONE_MENU:
+                    default:
+                        if (pageChangeListener != null) {
+                            pageChangeListener.onTapCenter();
+                        }
+                        break;
+                }
+                return true;
+        }
+
+        return true;
+    }
+
+    /**
+     * 尝试消费一次翻页事件（防抖）
+     * @param now 当前时间戳
+     * @return true 表示允许翻页；false 表示处于冷却期
+     */
+    private boolean tryConsumePageTurn(long now) {
+        if (now - lastPageChangeTime < PAGE_DEBOUNCE_MS) {
+            return false;
+        }
+        lastPageChangeTime = now;
         return true;
     }
 

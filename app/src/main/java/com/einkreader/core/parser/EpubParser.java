@@ -70,6 +70,10 @@ public class EpubParser {
     private static final Pattern REGEX_TRAILING_SEP2 = Pattern.compile("[_\\-\\s]+$");
     private static final Pattern REGEX_LEADING_ZERO = Pattern.compile("^0+");
     private static final Pattern REGEX_FAKE_CHAPTER = Pattern.compile("(?i)chapter[_\\-\\s]*\\d+");
+    // 全角空格清理（U+3000 中文空格）
+    private static final Pattern REGEX_FULLWIDTH_SPACE = Pattern.compile("\\u3000");
+    private static final Pattern REGEX_LEADING_FULLWIDTH = Pattern.compile("^[\\u3000]+");
+    private static final Pattern REGEX_TRAILING_FULLWIDTH = Pattern.compile("[\\u3000]+$");
 
     // 需要跳过内容的标签
     private static final java.util.HashSet<String> SKIP_TAGS = new java.util.HashSet<String>();
@@ -87,10 +91,13 @@ public class EpubParser {
         public List<Chapter> chapters;
         public List<String> spineOrder;
         String ncxHref;
+        String navXhtmlHref;  // EPUB3 nav.xhtml 路径（兜底目录来源）
+        public Map<String, String> images;  // 图片数据：path -> base64 encoded bytes
 
         public EpubResult() {
             chapters = new ArrayList<Chapter>();
             spineOrder = new ArrayList<String>();
+            images = new HashMap<String, String>();
         }
     }
 
@@ -119,11 +126,15 @@ public class EpubParser {
             lock = (existing != null) ? existing : newLock;
         }
         synchronized (lock) {
-            EpubResult cached = readCache(file);
-            if (cached != null) return cached;
-            EpubResult result = doParse(file);
-            writeCache(file, result);
-            return result;
+            try {
+                EpubResult cached = readCache(file);
+                if (cached != null) return cached;
+                EpubResult result = doParse(file);
+                writeCache(file, result);
+                return result;
+            } finally {
+                sParseLocks.remove(lockKey, lock);
+            }
         }
     }
 
@@ -145,7 +156,7 @@ public class EpubParser {
 
             // 2. 解析 OPF → 获取元数据、文件清单、spine 顺序
             String opfDir = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
-            parseOpf(zipFile, opfPath, result);
+            parseOpf(zipFile, opfPath, opfDir, result);
 
             // 3. 解析 NCX → 获取章节标题映射
             Map<String, String> ncxTitles = parseNcx(zipFile, opfDir, result);
@@ -211,7 +222,7 @@ public class EpubParser {
         return null;
     }
 
-    private static void parseOpf(ZipFile zipFile, String opfPath, EpubResult result) throws IOException {
+    private static void parseOpf(ZipFile zipFile, String opfPath, String opfDir, EpubResult result) throws IOException {
         ZipEntry entry = zipFile.getEntry(opfPath);
         if (entry == null) return;
 
@@ -244,9 +255,18 @@ public class EpubParser {
                             String mediaType = parser.getAttributeValue(null, "media-type");
                             if (id != null && href != null) {
                                 manifest.put(id, href);
-                                // 记录 NCX 路径
+                                // 记录 NCX 路径：加上 opfDir 前缀，便于后续直接定位
                                 if (mediaType != null && (mediaType.contains("dtbncx") || mediaType.contains("ncx"))) {
-                                    if (result.ncxHref == null) result.ncxHref = href;
+                                    String fullHref = href;
+                                    if (!fullHref.startsWith(opfDir)) fullHref = opfDir + fullHref;
+                                    if (result.ncxHref == null) result.ncxHref = fullHref;
+                                }
+                                // EPUB3 nav.xhtml（properties="nav"）作为兜底
+                                String properties = parser.getAttributeValue(null, "properties");
+                                if (properties != null && properties.equalsIgnoreCase("nav")) {
+                                    String fullHref = href;
+                                    if (!fullHref.startsWith(opfDir)) fullHref = opfDir + fullHref;
+                                    if (result.navXhtmlHref == null) result.navXhtmlHref = fullHref;
                                 }
                             }
                         } else if (inSpine && "itemref".equalsIgnoreCase(tag)) {
@@ -279,27 +299,65 @@ public class EpubParser {
     private static Map<String, String> parseNcx(ZipFile zipFile, String opfDir, EpubResult result) {
         Map<String, String> ncxTitles = new HashMap<String, String>();
 
-        // 找 NCX 文件：先看 manifest 声明，没有则全 ZIP 扫描
+        // 找 NCX 文件：先看 manifest 声明（已用 opfDir 拼接路径），没有则全 ZIP 扫描
         String ncxHref = result.ncxHref;
-        if (ncxHref == null || ncxHref.isEmpty()) {
-            // 遍历 ZIP 中所有 .ncx 文件
+        String ncxPath = null;
+        if (ncxHref != null && !ncxHref.isEmpty()
+                && (ncxHref.toLowerCase().endsWith(".ncx") || ncxHref.contains("ncx"))) {
+            ncxPath = ncxHref.startsWith(opfDir) ? ncxHref : opfDir + ncxHref;
+        }
+        if (ncxPath == null) {
             java.util.Enumeration<? extends ZipEntry> entries = zipFile.entries();
             while (entries.hasMoreElements()) {
                 ZipEntry ze = entries.nextElement();
                 String name = ze.getName();
                 if (name.toLowerCase().endsWith(".ncx")) {
-                    ncxHref = name;
+                    ncxPath = name;
                     break;
                 }
             }
         }
-        if (ncxHref == null) return ncxTitles;
 
-        String ncxPath = ncxHref.startsWith(opfDir) ? ncxHref : opfDir + ncxHref;
+        // 优先解析 NCX（EPUB2）
+        if (ncxPath != null) {
+            parseNcxXml(zipFile, ncxPath, ncxTitles);
+        }
+
+        // ★ EPUB3 兜底：很多 EPUB3 只有 nav.xhtml（内含 <nav epub:type="toc">）
+        if (ncxTitles.isEmpty()) {
+            String navHref = result.navXhtmlHref;
+            if ((navHref == null || navHref.isEmpty()) && opfDir != null) {
+                navHref = opfDir + "nav.xhtml";
+                if (zipFile.getEntry(navHref) == null) {
+                    navHref = null;
+                }
+            }
+            if (navHref != null) {
+                parseEpub3NavFallback(zipFile, navHref, ncxTitles);
+            } else {
+                // 最后兜底：扫描 ZIP 找任意可能的 nav/toc xhtml
+                parseEpub3NavFallback(zipFile, null, ncxTitles);
+            }
+        }
+
+        return ncxTitles;
+    }
+
+    /**
+     * 解析 NCX XML，正确处理多级嵌套 navpoint（仅使用顶层 navpoint 的条目）。
+     *
+     * 策略：使用栈跟踪每一层 navpoint 的 (src, label)，
+     * 进入新层时压栈并重置当前条目，退出某层时：
+     *   - 若退出的是顶层 (depth==1)：把该层的 src/label 写入 ncxTitles
+     *   - 若退出的是嵌套层：把当前条目的 src/label 合并回父层
+     *     （当嵌套层是"真正的标题层"、而父层只是容器时）
+     *
+     * 这样既避免中间层被错判为章节，又不会丢失深层有标题的条目。
+     */
+    private static void parseNcxXml(ZipFile zipFile, String ncxPath,
+                                    Map<String, String> ncxTitles) {
         ZipEntry ncxEntry = zipFile.getEntry(ncxPath);
-        if (ncxEntry == null) ncxEntry = zipFile.getEntry(ncxHref);
-        if (ncxEntry == null) return ncxTitles;
-
+        if (ncxEntry == null) return;
         InputStream is = null;
         try {
             is = zipFile.getInputStream(ncxEntry);
@@ -308,30 +366,58 @@ public class EpubParser {
             XmlPullParser parser = factory.newPullParser();
             parser.setInput(is, "UTF-8");
 
-            String currentSrc = null, currentLabel = null;
-            int navPointDepth = 0;  // ★ 只处理顶层 navpoint，跳过嵌套的页码条目
+            // 栈：每一层存储 [currentSrc, currentLabel]
+            List<String[]> stack = new ArrayList<String[]>();
+            String currentSrc = null;
+            String currentLabel = null;
+            boolean inNavlabel = false;
+            boolean inText = false;
+
             while (parser.getEventType() != XmlPullParser.END_DOCUMENT) {
-                if (parser.getEventType() == XmlPullParser.START_TAG) {
+                int event = parser.getEventType();
+                if (event == XmlPullParser.START_TAG) {
                     String tag = parser.getName();
                     if ("navpoint".equalsIgnoreCase(tag)) {
-                        navPointDepth++;
+                        stack.add(new String[]{null, null});
+                        currentSrc = null;
+                        currentLabel = null;
                     } else if ("content".equalsIgnoreCase(tag)) {
                         currentSrc = parser.getAttributeValue(null, "src");
+                        // 同时更新栈顶
+                        if (!stack.isEmpty()) stack.get(stack.size() - 1)[0] = currentSrc;
                     } else if ("navlabel".equalsIgnoreCase(tag)) {
-                        currentLabel = null;
-                    } else if ("text".equalsIgnoreCase(tag) && currentSrc != null) {
-                        currentLabel = readNcxText(parser);
+                        inNavlabel = true;
+                    } else if (inNavlabel && "text".equalsIgnoreCase(tag)) {
+                        inText = true;
+                        String text = readNcxText(parser);
+                        inText = false;
+                        if (text != null && !text.trim().isEmpty()) {
+                            currentLabel = text.trim();
+                            if (!stack.isEmpty()) stack.get(stack.size() - 1)[1] = currentLabel;
+                        }
                     }
-                } else if (parser.getEventType() == XmlPullParser.END_TAG) {
+                } else if (event == XmlPullParser.END_TAG) {
                     String endTag = parser.getName();
-                    if ("navpoint".equalsIgnoreCase(endTag)) {
-                        navPointDepth--;
-                        // ★ 只记录顶层 navpoint（depth == 0 表示刚退出顶层）
-                        if (navPointDepth == 0 && currentSrc != null && currentLabel != null) {
-                            String href = currentSrc;
-                            int hashIdx = href.indexOf('#');
-                            if (hashIdx > 0) href = href.substring(0, hashIdx);
-                            ncxTitles.put(href, currentLabel.trim());
+                    if ("navlabel".equalsIgnoreCase(endTag)) {
+                        inNavlabel = false;
+                    } else if ("navpoint".equalsIgnoreCase(endTag)) {
+                        if (!stack.isEmpty()) {
+                            String[] top = stack.remove(stack.size() - 1);
+                            int depth = stack.size() + 1; // 刚退出后的层级
+                            String src = top[0];
+                            String label = top[1];
+
+                            if (depth == 1) {
+                                // ★ 退出顶层 navpoint：提交
+                                commitNcxTitle(ncxTitles, src, label);
+                            } else {
+                                // 嵌套层：若父层还没有 src/label，则继承它
+                                if (!stack.isEmpty()) {
+                                    String[] parent = stack.get(stack.size() - 1);
+                                    if (parent[0] == null && src != null) parent[0] = src;
+                                    if (parent[1] == null && label != null) parent[1] = label;
+                                }
+                            }
                         }
                         currentSrc = null;
                         currentLabel = null;
@@ -344,7 +430,140 @@ public class EpubParser {
         } finally {
             if (is != null) try { is.close(); } catch (IOException e) { }
         }
-        return ncxTitles;
+    }
+
+    /**
+     * 提交 NCX 标题条目：去锚点、去 ./ 前缀、trim 空白
+     */
+    private static void commitNcxTitle(Map<String, String> ncxTitles, String src, String label) {
+        if (src == null || label == null) return;
+        String href = src;
+        int hashIdx = href.indexOf('#');
+        if (hashIdx > 0) href = href.substring(0, hashIdx);
+        if (href.startsWith("./")) href = href.substring(2);
+        String trimmed = label.trim();
+        if (!href.isEmpty() && !trimmed.isEmpty()) {
+            // 只保留第一个（避免被嵌套子项或重复覆盖）
+            if (!ncxTitles.containsKey(href)) {
+                ncxTitles.put(href, trimmed);
+            }
+        }
+    }
+
+    /**
+     * EPUB3 兜底解析：从 nav.xhtml 的 <nav epub:type="toc"> <ol><li><a href="...">title</a>
+     * 中提取目录。使用递归栈处理任意深度的嵌套。
+     *
+     * @param navHref 若为 null，则扫描 ZIP 找任意可能的 nav/toc xhtml
+     */
+    private static void parseEpub3NavFallback(ZipFile zipFile, String navHref,
+                                              Map<String, String> ncxTitles) {
+        ZipEntry navEntry = null;
+        if (navHref != null) {
+            navEntry = zipFile.getEntry(navHref);
+        }
+        if (navEntry == null) {
+            java.util.Enumeration<? extends ZipEntry> entries = zipFile.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry ze = entries.nextElement();
+                String name = ze.getName();
+                String low = name.toLowerCase();
+                if ((low.endsWith(".xhtml") || low.endsWith(".html"))
+                        && (low.contains("nav") || low.contains("toc"))) {
+                    navEntry = ze;
+                    break;
+                }
+            }
+        }
+        if (navEntry == null) return;
+
+        InputStream is = null;
+        try {
+            is = zipFile.getInputStream(navEntry);
+            XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+            factory.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false);
+            XmlPullParser parser = factory.newPullParser();
+            parser.setInput(is, "UTF-8");
+
+            // 使用栈跟踪每个 <li> 的当前 <a href> 与累计文本
+            java.util.List<String[]> liStack = new java.util.ArrayList<String[]>();
+            String currentHref = null;
+            StringBuilder currentText = new StringBuilder();
+            int inTocNav = 0; // 标记是否在 type="toc" 的 <nav> 内
+            String navType = null;
+
+            while (parser.getEventType() != XmlPullParser.END_DOCUMENT) {
+                int ev = parser.getEventType();
+                if (ev == XmlPullParser.START_TAG) {
+                    String tag = parser.getName();
+                    if ("nav".equalsIgnoreCase(tag)) {
+                        String type = parser.getAttributeValue("http://www.idpf.org/2007/ops", "type");
+                        if (type == null) type = parser.getAttributeValue(null, "epub:type");
+                        if (type == null) {
+                            for (int ai = 0; ai < parser.getAttributeCount(); ai++) {
+                                String an = parser.getAttributeName(ai);
+                                if (an != null && an.endsWith("type")) {
+                                    type = parser.getAttributeValue(ai);
+                                    break;
+                                }
+                            }
+                        }
+                        navType = (type != null) ? type.toLowerCase() : null;
+                        if ("toc".equals(navType)) inTocNav = 1;
+                    } else if (inTocNav > 0 && "li".equalsIgnoreCase(tag)) {
+                        liStack.add(new String[]{null, null});
+                        currentHref = null;
+                        currentText.setLength(0);
+                    } else if (inTocNav > 0 && "a".equalsIgnoreCase(tag)) {
+                        currentHref = parser.getAttributeValue(null, "href");
+                        if (!liStack.isEmpty()) {
+                            String[] top = liStack.get(liStack.size() - 1);
+                            top[0] = currentHref;
+                        }
+                        currentText.setLength(0);
+                    }
+                } else if (ev == XmlPullParser.TEXT) {
+                    if (inTocNav > 0) {
+                        String txt = parser.getText();
+                        if (txt != null) currentText.append(txt);
+                    }
+                } else if (ev == XmlPullParser.END_TAG) {
+                    String endTag = parser.getName();
+                    if ("nav".equalsIgnoreCase(endTag)) {
+                        if ("toc".equals(navType)) inTocNav = 0;
+                        navType = null;
+                    } else if (inTocNav > 0 && "li".equalsIgnoreCase(endTag)) {
+                        if (!liStack.isEmpty()) {
+                            String[] top = liStack.remove(liStack.size() - 1);
+                            String src = top[0] != null ? top[0] : currentHref;
+                            String label = currentText.toString().trim();
+                            if (!liStack.isEmpty()) {
+                                // 非顶层 li：把 src/label 合并回父层（若父层为空）
+                                String[] parent = liStack.get(liStack.size() - 1);
+                                if (parent[0] == null && src != null) parent[0] = src;
+                                if ((parent[1] == null || parent[1].isEmpty()) && !label.isEmpty()) {
+                                    parent[1] = label;
+                                }
+                            } else {
+                                // 顶层 li 退出 → 提交
+                                commitNcxTitle(ncxTitles, src, label);
+                            }
+                        }
+                    } else if (inTocNav > 0 && "a".equalsIgnoreCase(endTag)) {
+                        if (!liStack.isEmpty()) {
+                            String[] top = liStack.get(liStack.size() - 1);
+                            String label = currentText.toString().trim();
+                            top[1] = label;
+                        }
+                    }
+                }
+                parser.next();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "EPUB3 nav fallback failed: " + e.getMessage());
+        } finally {
+            if (is != null) try { is.close(); } catch (IOException e) { }
+        }
     }
 
     private static String readNcxText(XmlPullParser parser) throws Exception {
@@ -792,6 +1011,19 @@ public class EpubParser {
         resultText = REGEX_SPACE_2PLUS.matcher(resultText).replaceAll(" ");
         resultText = REGEX_NL_TRAIL_SPACE.matcher(resultText).replaceAll("\n");
         resultText = REGEX_TRAIL_SPACE_NL.matcher(resultText).replaceAll("\n");
+        // ★ 清理全角空格（U+3000）：逐个段落处理，去除段首/段尾的全角空格
+        String[] rawParas = resultText.split("\n", -1);
+        StringBuilder fixed = new StringBuilder(resultText.length());
+        for (int i = 0; i < rawParas.length; i++) {
+            String p = rawParas[i];
+            // 段首全角空格
+            p = REGEX_LEADING_FULLWIDTH.matcher(p).replaceAll("");
+            // 段尾全角空格
+            p = REGEX_TRAILING_FULLWIDTH.matcher(p).replaceAll("");
+            if (i > 0) fixed.append('\n');
+            fixed.append(p);
+        }
+        resultText = fixed.toString();
         resultText = resultText.trim();
 
         // ★ 对齐 paraTypes 与最终段落数：trim 删除了前导空段，对应标记从列表头部移除
@@ -881,10 +1113,13 @@ public class EpubParser {
         String name = href;
         int lastSlash = name.lastIndexOf('/');
         if (lastSlash >= 0) name = name.substring(lastSlash + 1);
+        // 去掉锚点 # 部分
+        int hashIdx = name.indexOf('#');
+        if (hashIdx >= 0) name = name.substring(0, hashIdx);
         int dotIndex = name.lastIndexOf('.');
         if (dotIndex > 0) name = name.substring(0, dotIndex);
 
-        // 智能文件名提取标题
+        // 纯数字文件名 -> 转换为中文章节编号
         if (name.matches("\\d+")) {
             try {
                 int num = Integer.parseInt(name);
@@ -892,6 +1127,7 @@ public class EpubParser {
             } catch (NumberFormatException e) { }
         }
 
+        // 英文前缀 chapter/chap/ch/section/part/... 去重
         String lower = name.toLowerCase();
         lower = REGEX_LEADING_CHAP.matcher(lower).replaceFirst("");
         lower = REGEX_TRAILING_SEP.matcher(lower).replaceFirst("");
@@ -909,15 +1145,37 @@ public class EpubParser {
         name = REGEX_LEADING_ZERO.matcher(name).replaceFirst("");
 
         if (!name.isEmpty()) {
-            if (name.matches("(?i)^(prologue|foreword|preface|introduction)$"))
+            // 常见英文特殊章节名
+            if (name.matches("(?i)^(prologue|foreword|preface|introduction|intro)$"))
                 return "序言";
             if (name.matches("(?i)^(epilogue|afterword|postscript)$"))
                 return "后记";
-            if (name.matches("(?i)^(appendix|reference|glossary)$"))
+            if (name.matches("(?i)^(appendix|reference|glossary|bibliography)$"))
                 return "附录";
+            if (name.matches("(?i)^(cover|titlepage|copyright|colophon)$"))
+                return "封面";
+            if (name.matches("(?i)^(dedication|acknowledg|acknowledgement)$"))
+                return "致谢";
+            if (name.matches("(?i)^(table[_\\-]?of[_\\-]?contents|toc|contents)$"))
+                return "目录";
+            if (name.matches("(?i)^(index|backmatter)$"))
+                return "索引";
+            if (name.matches("(?i)^(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module)\\s*\\d+$")) {
+                // 英文 "chapter 1" 风格，保留
+                return capitalizeFirst(name);
+            }
+            // 常见中文章节前缀 "第X章 / 第X节 / 第X卷 / 第X回 / 第X集 / 第X篇 / 第X部"
+            if (name.matches("第[零一二三四五六七八九十百千万亿\\d]+[章节回卷集篇部篇]?")) {
+                return name;
+            }
             return name;
         }
         return "第" + (index + 1) + "章";
+    }
+
+    private static String capitalizeFirst(String s) {
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     private static String readText(XmlPullParser parser) throws Exception {
@@ -950,6 +1208,8 @@ public class EpubParser {
         return new File(getCacheDir(epubFile), cacheName);
     }
 
+    private static final String CACHE_VERSION = "v3";
+
     private static EpubResult readCache(File file) {
         File cacheFile = getCacheFile(file);
         if (!cacheFile.exists()) return null;
@@ -958,6 +1218,11 @@ public class EpubParser {
             reader = new BufferedReader(new InputStreamReader(new FileInputStream(cacheFile), "UTF-8"));
             String cachedKey = reader.readLine();
             if (!getCacheKey(file).equals(cachedKey)) return null;
+            String version = reader.readLine();
+            if (!CACHE_VERSION.equals(version)) {
+                // 旧版缓存格式，强制重新解析
+                return null;
+            }
             String title = unescapeFromCache(reader.readLine());
             String author = unescapeFromCache(reader.readLine());
             int chapterCount = Integer.parseInt(reader.readLine().trim());
@@ -984,6 +1249,13 @@ public class EpubParser {
                 String content = new String(buf, 0, read);
                 Chapter chapter = new Chapter(chTitle, content);
                 chapter.setIndex(i);
+                // ★ 读取段落类型列表
+                List<Integer> paraTypes = new ArrayList<Integer>();
+                int ptCount = Integer.parseInt(reader.readLine().trim());
+                for (int p = 0; p < ptCount; p++) {
+                    paraTypes.add(Integer.parseInt(reader.readLine().trim()));
+                }
+                chapter.setParagraphTypes(paraTypes);
                 result.chapters.add(chapter);
             }
             return result;
@@ -1003,6 +1275,7 @@ public class EpubParser {
         try {
             writer = new OutputStreamWriter(new FileOutputStream(tmpFile), "UTF-8");
             writer.write(getCacheKey(file) + "\n");
+            writer.write(CACHE_VERSION + "\n");
             // ★ I-3: 使用 JSON 转义标题和作者，防止换行符破坏缓存格式
             writer.write(escapeForCache(result.title != null ? result.title : "") + "\n");
             writer.write(escapeForCache(result.author != null ? result.author : "") + "\n");
@@ -1012,6 +1285,13 @@ public class EpubParser {
                 String content = ch.getContent() != null ? ch.getContent() : "";
                 writer.write(content.length() + "\n");
                 writer.write(content);
+                // ★ 写入段落类型列表
+                List<Integer> paraTypes = ch.getParagraphTypes();
+                int ptCount = (paraTypes == null) ? 0 : paraTypes.size();
+                writer.write(ptCount + "\n");
+                for (int p = 0; p < ptCount; p++) {
+                    writer.write(paraTypes.get(p) + "\n");
+                }
             }
             writer.flush(); writer.close(); writer = null;
             if (cacheFile.exists()) cacheFile.delete();

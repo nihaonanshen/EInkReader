@@ -1,1 +1,0 @@
-rd_("cjniiquick_xml")

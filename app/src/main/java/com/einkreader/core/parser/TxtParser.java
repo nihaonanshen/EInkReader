@@ -33,6 +33,7 @@ public class TxtParser {
     private static final String TAG = "TxtParser";
     private static final int DEFAULT_CHAPTER_SIZE = 3000; // 无标题时按3000字一章
     private static final String CACHE_DIR_NAME = "txt_parse_cache";
+    private static final String CACHE_VERSION = "v2";  // 章节识别规则变更时递增，强制旧缓存失效
 
     // ===== 章节标题正则（综合版，覆盖主流中文小说格式）=====
     // 完整版：第X章/回/节 + 可选标题
@@ -52,7 +53,8 @@ public class TxtParser {
     // ★ 新增：匹配英文 Chapter 1 / Chapter One / Ch.1 格式
     private static final Pattern ENG_CHAPTER_PATTERN = Pattern.compile(
         "^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module|lecture)" +
-        "[.\\-:\\s]*[\\d一二三四五六七八九十百千]+(?:[.\\-:\\s]+.*)?$"
+        "[.\\-:\\s]+(\\d+|[a-z]+(?:\\s[a-z]+){0,3})" +
+        "(?:[.\\-:\\s]+[A-Za-z].*)?[\\s\\u3000]*$"
     );
 
     // ★ 新增：匹配 "VOL.1" "Volume 1" 格式
@@ -60,23 +62,23 @@ public class TxtParser {
         "^(?i)(volume|vol)\\s*\\.?\\s*[\\d]+(?:[.:\\s]+.*)?$"
     );
 
-    // ★ 新增：匹配 "楔子" "序章" "引子" "后记" "尾声" "番外" 等
+    // ★ 新增：匹配 "楔子" "序章" "引子" "后记" "尾声" "番外" 等（允许带副标题）
     private static final Pattern SPECIAL_CHAPTER_PATTERN = Pattern.compile(
         "^[\\s\\u3000]*(?:楔子|序章|序言|引子|前言|前奏|序幕|开篇|开场|写在前面|题记)" +
-        "[\\s\\u3000]*$|" +
-        "^[\\s\\u3000]*(?:后记|尾声|终章|结局|尾声|结语|番外|外传|特别篇|附录|附注)" +
-        "[\\s\\u3000]*$"
+        "[\\s\\u3000]*(?:[\\S　].*)?[\\s\\u3000]*$|" +
+        "^[\\s\\u3000]*(?:后记|尾声|终章|结局|结语|番外|外传|特别篇|附录|附注|致谢|序章)" +
+        "[\\s\\u3000]*(?:[\\S　].*)?[\\s\\u3000]*$"
     );
 
     // 编码回退列表
     private static final String[] FALLBACK_ENCODINGS = {"GBK", "GB18030", "UTF-8", "Big5", "GB2312"};
 
-    // ★ 收紧：匹配纯数字章节（要求有明确分隔符，减少正文误匹配）
+    // ★ 收紧：匹配纯数字章节（编号≤200 + 至少1个中文字作为标题，防止匹配列表序号）
     private static final Pattern NUM_CHAPTER_PATTERN = Pattern.compile(
         "^[\\s\\u3000]*" +
-        "(?:[零一二三四五六七八九十百千万亿]+|[\\d]+)" +
+        "(?:[零一二三四五六七八九十百千万亿]{1,3}|[\\d]{1,3})" +
         "[、．.\\s　]" +  // 必须有一个明确的分隔符
-        "(?:[\\u4e00-\\u9fff]{1,30})?" +
+        "[\\u4e00-\\u9fff]{1,30}" +  // 必须有至少1个中文字
         "[\\s\\u3000]*$"
     );
 
@@ -135,16 +137,37 @@ public class TxtParser {
             lock = (existing != null) ? existing : newLock;
         }
         synchronized (lock) {
-            // 先尝试读缓存
-            ParseResult cached = readCache(file);
-            if (cached != null) return cached;
+            try {
+                // 先尝试读缓存
+                ParseResult cached = readCache(file, forcedEncoding);
+                if (cached != null) return cached;
 
-            // 没有缓存，真解析
-            ParseResult result = doParse(file, forcedEncoding);
-            writeCache(file, result);
-            return result;
+                // 没有缓存，真解析
+                ParseResult result = doParse(file, forcedEncoding);
+                writeCache(file, result, forcedEncoding);
+                return result;
+            } finally {
+                // 清理 lock 引用（仅当当前线程持有的是锁对象本身才移除）
+                // 使用 remove(key, value) 避免误删其他线程后续 put 的新锁
+                sParseLocks.remove(lockKey, lock);
+            }
         }
     }
+
+    // ===== 严格版模式（仅匹配"明确"的章节标题，避免误识别正文）=====
+    private static final Pattern STRICT_CN_PATTERN = Pattern.compile(
+        "^[\\s\\u3000]*[【\\-―※（(\\[{]*" +
+        "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]" +
+        "[）)〕\\]}]?[\\s\\u3000]*" +
+        "(?:[】\\-―※]*[\\s\\u3000]*(\\S.*))?" +
+        "[\\s\\u3000]*$"
+    );
+
+    private static final Pattern STRICT_EN_PATTERN = Pattern.compile(
+        "^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module|lecture)" +
+        "[.\\-:\\s]*[\\d一二三四五六七八九十百千]+" +
+        "(?:[.\\-:\\s]+[A-Za-z].*)?[\\s\\u3000]*$"
+    );
 
     // ===== 解析逻辑 =====
 
@@ -198,19 +221,15 @@ public class TxtParser {
         // 检测章节标题（基于行偏移，无需逐行 String）
         List<int[]> chapterBreaks = new ArrayList<int[]>();
         List<String> chapterTitles = new ArrayList<String>();
-        for (int li = 0; li < lineCount; li++) {
-            String lineText = extractLine(fullText, lineOffsets, li);
-            if (isChapterTitle(lineText)) {
-                if (chapterBreaks.isEmpty() && li > 0) {
-                    chapterBreaks.add(new int[]{0, li});
-                    chapterTitles.add(null);
-                } else if (!chapterBreaks.isEmpty()) {
-                    int[] prev = chapterBreaks.get(chapterBreaks.size() - 1);
-                    prev[1] = li;
-                }
-                chapterBreaks.add(new int[]{li + 1, -1});
-                chapterTitles.add(cleanTitle(extractChapterTitle(lineText)));
-            }
+        int detectedCount = scanChapterTitles(fullText, lineOffsets, chapterBreaks, chapterTitles, false);
+
+        // ★ 后处理：如果检测到的章节数量异常多，或相邻章节间隔过少，
+        // 切换到严格模式重新识别（防止正文里 "第一章" 字样造成大量误判）
+        if (detectedCount > 200 || hasSuspiciousDensity(chapterBreaks, lineCount)) {
+            com.einkreader.ui.reader.DebugLog.log("Txt", "章节密度异常 (" + detectedCount + ")，切换到严格模式");
+            chapterBreaks.clear();
+            chapterTitles.clear();
+            scanChapterTitles(fullText, lineOffsets, chapterBreaks, chapterTitles, true);
         }
         if (!chapterBreaks.isEmpty()) {
             int[] last = chapterBreaks.get(chapterBreaks.size() - 1);
@@ -293,13 +312,25 @@ public class TxtParser {
                 if (c >= 0x4E00 && c <= 0x9FFF) chineseCount++;
                 else if (c == '\uFFFD') replacementCount++; // 非法字符
             }
-            // 如果有大量替换字符（>10%）或中文比例极低（<0.5%）且非空文件，尝试下一个编码
+            // 如果有大量替换字符（>10%），判定为编码错误
             if (totalChars > 200 && replacementCount * 100 / totalChars > 10) {
                 com.einkreader.ui.reader.DebugLog.log("Txt", "编码 " + encoding + " 替换字符过多 (" + replacementCount + "/" + totalChars + ")，尝试下一个");
                 return null;
             }
-            if (totalChars > 500 && chineseCount == 0 && replacementCount == 0) {
-                // 无中文也无替换字符——可能是英文或其他，接受当前编码
+            // 中文比例极低（<0.5%）且无替换字符——极可能是错误编码（把中文解码成了无意义的拉丁字符），
+            // 但也可能是真正的英文 TXT，这里做保守判断：长度超过 500 字且全为 ASCII 时接受，否则拒绝
+            if (totalChars > 200 && chineseCount == 0) {
+                int asciiCount = 0;
+                for (int i = 0; i < totalChars; i++) {
+                    char c = text.charAt(i);
+                    if (c <= 0x7F) asciiCount++;
+                }
+                int asciiRatio = asciiCount * 100 / totalChars;
+                if (asciiRatio < 90) {
+                    // 不是纯 ASCII 又没有中文——大概率是解码错了
+                    com.einkreader.ui.reader.DebugLog.log("Txt", "编码 " + encoding + " 无中文也非纯 ASCII (ASCII 占比=" + asciiRatio + "%)，尝试下一个");
+                    return null;
+                }
             }
             // 检测通过
             resultHint.encoding = encoding;
@@ -347,33 +378,89 @@ public class TxtParser {
 
     // ===== 工具方法 =====
 
+    /** 扫描章节标题；返回识别到的章节数 */
+    private static int scanChapterTitles(String fullText, int[] lineOffsets,
+                                         List<int[]> chapterBreaks, List<String> chapterTitles,
+                                         boolean strict) {
+        int count = 0;
+        int lineCount = lineOffsets.length - 1;
+        for (int li = 0; li < lineCount; li++) {
+            String lineText = extractLine(fullText, lineOffsets, li);
+            boolean isTitle = strict ? isStrictChapterTitle(lineText) : isChapterTitle(lineText);
+            if (isTitle) {
+                count++;
+                if (chapterBreaks.isEmpty() && li > 0) {
+                    chapterBreaks.add(new int[]{0, li});
+                    chapterTitles.add(null);
+                } else if (!chapterBreaks.isEmpty()) {
+                    int[] prev = chapterBreaks.get(chapterBreaks.size() - 1);
+                    prev[1] = li;
+                }
+                chapterBreaks.add(new int[]{li + 1, -1});
+                chapterTitles.add(cleanTitle(extractChapterTitle(lineText)));
+            }
+        }
+        return count;
+    }
+
+    /** 判断章节密度是否可疑（相邻章节间隔 < 3 行占比过高）*/
+    private static boolean hasSuspiciousDensity(List<int[]> chapterBreaks, int lineCount) {
+        if (chapterBreaks.size() < 10) return false;
+        int shortGap = 0;
+        int totalGap = 0;
+        for (int i = 0; i < chapterBreaks.size() - 1; i++) {
+            int[] cur = chapterBreaks.get(i);
+            int[] next = chapterBreaks.get(i + 1);
+            int gap = next[0] - cur[0];
+            if (gap <= 0) continue;
+            totalGap++;
+            if (gap < 3) shortGap++;
+        }
+        // 超过 30% 的相邻章节间隔 < 3 行，疑似误判
+        return totalGap > 0 && shortGap * 100 > totalGap * 30;
+    }
+
     private static boolean isChapterTitle(String line) {
         if (line == null || line.isEmpty()) return false;
         String trimmed = line.trim();
         // 太长的行不可能是标题（标题一般不超过 50 字）
         if (trimmed.length() > 80) return false;
-        return CHAPTER_PATTERN.matcher(line).find()
-            || LOOSE_CHAPTER_PATTERN.matcher(line).find()
-            || ENG_CHAPTER_PATTERN.matcher(line).find()
-            || SPECIAL_CHAPTER_PATTERN.matcher(line).find()
-            || VOLUME_PATTERN.matcher(line).find()
-            || NUM_CHAPTER_PATTERN.matcher(line).find()
-            || DECORATED_CHAPTER_PATTERN.matcher(line).find()
-            || (trimmed.length() < 50 && ANYWHERE_CHAPTER_PATTERN.matcher(line).find());
+        // ★ 完整行匹配（matches）防止行中间出现 "第一章" 子串时误判
+        if (CHAPTER_PATTERN.matcher(trimmed).matches()) return true;
+        if (LOOSE_CHAPTER_PATTERN.matcher(trimmed).matches()) return true;
+        if (ENG_CHAPTER_PATTERN.matcher(trimmed).matches()) return true;
+        if (SPECIAL_CHAPTER_PATTERN.matcher(trimmed).matches()) return true;
+        if (VOLUME_PATTERN.matcher(trimmed).matches()) return true;
+        if (NUM_CHAPTER_PATTERN.matcher(trimmed).matches()) return true;
+        if (DECORATED_CHAPTER_PATTERN.matcher(trimmed).matches()) return true;
+        if (ANYWHERE_CHAPTER_PATTERN.matcher(trimmed).matches()) return true;
+        return false;
+    }
+
+    /** 仅使用严格模式的章节标题检测（用于误判过多时的兜底） */
+    private static boolean isStrictChapterTitle(String line) {
+        if (line == null || line.isEmpty()) return false;
+        String trimmed = line.trim();
+        if (trimmed.length() > 80) return false;
+        if (STRICT_CN_PATTERN.matcher(trimmed).matches()) return true;
+        if (STRICT_EN_PATTERN.matcher(trimmed).matches()) return true;
+        if (SPECIAL_CHAPTER_PATTERN.matcher(trimmed).matches()) return true;
+        return false;
     }
 
     private static String extractChapterTitle(String line) {
+        if (line == null) return "";
         String trimmed = line.trim();
         if (trimmed.isEmpty()) return trimmed;
-        if (trimmed.length() > 80) return ""; // 太长的行不可能是标题
-        if (CHAPTER_PATTERN.matcher(trimmed).find()) return trimmed;
-        if (LOOSE_CHAPTER_PATTERN.matcher(trimmed).find()) return trimmed;
-        if (ENG_CHAPTER_PATTERN.matcher(trimmed).find()) return trimmed;
-        if (SPECIAL_CHAPTER_PATTERN.matcher(trimmed).find()) return trimmed;
-        if (VOLUME_PATTERN.matcher(trimmed).find()) return trimmed;
-        if (NUM_CHAPTER_PATTERN.matcher(trimmed).find()) return trimmed;
-        if (DECORATED_CHAPTER_PATTERN.matcher(trimmed).find()) return trimmed;
-        if (trimmed.length() < 50 && ANYWHERE_CHAPTER_PATTERN.matcher(trimmed).find()) return trimmed;
+        if (trimmed.length() > 80) return "";
+        if (CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed;
+        if (LOOSE_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed;
+        if (ENG_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed;
+        if (SPECIAL_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed;
+        if (VOLUME_PATTERN.matcher(trimmed).matches()) return trimmed;
+        if (NUM_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed;
+        if (DECORATED_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed;
+        if (ANYWHERE_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed;
         return "";
     }
 
@@ -417,8 +504,8 @@ public class TxtParser {
 
     // ===== 缓存机制 =====
 
-    private static String getCacheKey(File file) {
-        return file.getAbsolutePath() + "|" + file.length() + "|" + file.lastModified();
+    private static String getCacheKey(File file, String forcedEncoding) {
+        return CACHE_VERSION + "|" + file.getAbsolutePath() + "|" + file.length() + "|" + file.lastModified() + "|" + (forcedEncoding != null ? forcedEncoding : "auto");
     }
 
     private static File getCacheDir(File txtFile) {
@@ -444,15 +531,15 @@ public class TxtParser {
         }
     }
 
-    private static ParseResult readCache(File file) {
+    private static ParseResult readCache(File file, String forcedEncoding) {
         File cacheFile = getCacheFile(file);
         if (!cacheFile.exists()) return null;
         BufferedReader reader = null;
         try {
             reader = new BufferedReader(new InputStreamReader(new FileInputStream(cacheFile), "UTF-8"));
             String cachedKey = reader.readLine();
-            if (!getCacheKey(file).equals(cachedKey)) return null;
-            String title = reader.readLine();
+            if (!getCacheKey(file, forcedEncoding).equals(cachedKey)) return null;
+            String title = unescapeFromCache(reader.readLine());
             String encoding = reader.readLine();
             int chapterCount = Integer.parseInt(reader.readLine());
             ParseResult result = new ParseResult();
@@ -460,7 +547,7 @@ public class TxtParser {
             result.encoding = encoding;
             StringBuilder fullBuilder = new StringBuilder();
             for (int i = 0; i < chapterCount; i++) {
-                String chTitle = reader.readLine();
+                String chTitle = unescapeFromCache(reader.readLine());
                 int lineStart = Integer.parseInt(reader.readLine());
                 int lineEnd = Integer.parseInt(reader.readLine());
                 int contentLen = Integer.parseInt(reader.readLine());
@@ -485,19 +572,29 @@ public class TxtParser {
         }
     }
 
-    private static void writeCache(File file, ParseResult result) {
+    private static String escapeForCache(String s) {
+        if (s == null) return "";
+        return s.replace("\r", "\uE002").replace("\n", "\uE003");
+    }
+
+    private static String unescapeFromCache(String s) {
+        if (s == null) return "";
+        return s.replace("\uE003", "\n").replace("\uE002", "\r");
+    }
+
+    private static void writeCache(File file, ParseResult result, String forcedEncoding) {
         if (result == null || result.chapters == null || result.chapters.isEmpty()) return;
         File cacheFile = getCacheFile(file);
         File tmpFile = new File(cacheFile.getAbsolutePath() + ".tmp");
         OutputStreamWriter writer = null;
         try {
             writer = new OutputStreamWriter(new FileOutputStream(tmpFile), "UTF-8");
-            writer.write(getCacheKey(file) + "\n");
-            writer.write((result.bookTitle != null ? result.bookTitle : "") + "\n");
+            writer.write(getCacheKey(file, forcedEncoding) + "\n");
+            writer.write(escapeForCache(result.bookTitle != null ? result.bookTitle : "") + "\n");
             writer.write((result.encoding != null ? result.encoding : "") + "\n");
             writer.write(result.chapters.size() + "\n");
             for (Chapter ch : result.chapters) {
-                writer.write((ch.getTitle() != null ? ch.getTitle() : "") + "\n");
+                writer.write(escapeForCache(ch.getTitle() != null ? ch.getTitle() : "") + "\n");
                 writer.write(ch.getLineStart() + "\n");
                 writer.write(ch.getLineEnd() + "\n");
                 String content = ch.getContent() != null ? ch.getContent() : "";

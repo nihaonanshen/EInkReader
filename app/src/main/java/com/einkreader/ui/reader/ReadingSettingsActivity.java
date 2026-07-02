@@ -11,6 +11,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.SeekBar;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -33,10 +34,12 @@ public class ReadingSettingsActivity extends Activity {
 
     private SharedPreferences prefs;
 
-    private SeekBar seekTextSize, seekLineSpacing, seekParaSpacing;
-    private TextView labelTextSize, labelLineSpacing, labelParaSpacing;
-    private ListView fontList;
-    private List<FontItem> fonts = new ArrayList<FontItem>();
+    private SeekBar seekLineSpacing, seekParaSpacing;
+        private TextView labelTextSize, labelLineSpacing, labelParaSpacing;
+        private TextView btnFontMinus, btnFontPlus;
+        private ListView fontList;
+        private List<FontItem> fonts = new ArrayList<FontItem>();
+        private Switch switchFirstLineIndent;
 
     static class FontItem {
         String displayName;
@@ -56,13 +59,27 @@ public class ReadingSettingsActivity extends Activity {
 
         prefs = getSharedPreferences("eink_reader_prefs", MODE_PRIVATE);
 
-        seekTextSize = (SeekBar) findViewById(R.id.seek_text_size);
         seekLineSpacing = (SeekBar) findViewById(R.id.seek_line_spacing);
-        seekParaSpacing = (SeekBar) findViewById(R.id.seek_para_spacing);
-        labelTextSize = (TextView) findViewById(R.id.label_text_size);
-        labelLineSpacing = (TextView) findViewById(R.id.label_line_spacing);
-        labelParaSpacing = (TextView) findViewById(R.id.label_para_spacing);
-        fontList = (ListView) findViewById(R.id.font_list);
+                seekParaSpacing = (SeekBar) findViewById(R.id.seek_para_spacing);
+                labelTextSize = (TextView) findViewById(R.id.label_text_size);
+                labelLineSpacing = (TextView) findViewById(R.id.label_line_spacing);
+                labelParaSpacing = (TextView) findViewById(R.id.label_para_spacing);
+                btnFontMinus = (TextView) findViewById(R.id.btn_font_minus);
+                btnFontPlus = (TextView) findViewById(R.id.btn_font_plus);
+                fontList = (ListView) findViewById(R.id.font_list);
+                switchFirstLineIndent = (Switch) findViewById(R.id.switch_first_line_indent);
+        
+                // ★ 加载首行缩进设置
+                boolean indentEnabled = prefs.getBoolean("first_line_indent", false); // 默认关闭
+                switchFirstLineIndent.setChecked(indentEnabled);
+        
+                switchFirstLineIndent.setOnCheckedChangeListener(new android.widget.CompoundButton.OnCheckedChangeListener() {
+                    @Override
+                    public void onCheckedChanged(android.widget.CompoundButton buttonView, boolean isChecked) {
+                        prefs.edit().putBoolean("first_line_indent", isChecked).apply();
+                        setResult(RESULT_OK);
+                    }
+                });
 
         // ★ 左右边距
         SeekBar seekHorizontalMargin = (SeekBar) findViewById(R.id.seek_horizontal_margin);
@@ -87,11 +104,10 @@ public class ReadingSettingsActivity extends Activity {
         });
 
         // 加载保存的值
-        int savedTextSize = (int) prefs.getFloat("text_size", 20f);
+        int savedTextSize = (int) prefs.getFloat("text_size", 28f);
         int savedLineSpacing = prefs.getInt("line_spacing", 15);
         int savedParaSpacing = prefs.getInt("para_spacing", 18);
 
-        seekTextSize.setProgress(savedTextSize);
         seekLineSpacing.setProgress(savedLineSpacing);
         seekParaSpacing.setProgress(savedParaSpacing);
 
@@ -99,17 +115,22 @@ public class ReadingSettingsActivity extends Activity {
         labelLineSpacing.setText(String.format("%.1f", savedLineSpacing / 10f));
         labelParaSpacing.setText(String.format("%.1f", savedParaSpacing / 10f));
 
-        // 字体大小滑块
-        seekTextSize.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override
-            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                if (progress < 12) progress = 12;
-                if (progress > 40) progress = 40;
-                labelTextSize.setText(String.valueOf(progress));
-                prefs.edit().putFloat("text_size", (float) progress).apply();
+        // 字号快捷按钮
+        btnFontMinus.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                float cur = prefs.getFloat("text_size", 28f);
+                float next = Math.max(14f, cur - 1);
+                prefs.edit().putFloat("text_size", next).apply();
+                labelTextSize.setText(String.valueOf((int) next));
+                setResult(RESULT_OK);
             }
-            @Override public void onStartTrackingTouch(SeekBar seekBar) { }
-            @Override public void onStopTrackingTouch(SeekBar seekBar) {
+        });
+        btnFontPlus.setOnClickListener(new View.OnClickListener() {
+            @Override public void onClick(View v) {
+                float cur = prefs.getFloat("text_size", 28f);
+                float next = Math.min(64f, cur + 1);
+                prefs.edit().putFloat("text_size", next).apply();
+                labelTextSize.setText(String.valueOf((int) next));
                 setResult(RESULT_OK);
             }
         });

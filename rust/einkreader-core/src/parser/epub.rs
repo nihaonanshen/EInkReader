@@ -8,6 +8,7 @@
 //!
 //! 本实现提供最小可用版本：提取 title/author、按 spine 读取 XHTML、清理 HTML 标签、NCX 标题匹配。
 
+use once_cell::sync::Lazy;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use regex::Regex;
@@ -16,6 +17,7 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 use zip::ZipArchive;
+use base64::{engine::general_purpose::STANDARD, Engine};
 
 use crate::types::{EpubChapter, EpubParseResult};
 
@@ -30,27 +32,21 @@ const BLOCK_TAGS: &[&str] = &[
 const SKIP_TAGS: &[&str] = &["style", "script", "head"];
 
 // 预编译正则
-lazy_static::lazy_static! {
-    static ref REGEX_NL_3PLUS: Regex = Regex::new(r"\n{3,}").unwrap();
-    static ref REGEX_SPACE_2PLUS: Regex = Regex::new(r"[ \t]{2,}").unwrap();
-    static ref REGEX_NL_TRAIL_SPACE: Regex = Regex::new(r"\n[ \t]+").unwrap();
-    static ref REGEX_TRAIL_SPACE_NL: Regex = Regex::new(r"[ \t]+\n").unwrap();
-    static ref REGEX_FAKE_CHAPTER: Regex = Regex::new(r"(?i)^chapter[\s_\-]*\d+$").unwrap();
-    static ref REGEX_LEADING_CHAP: Regex =
-        Regex::new(r"^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module)\s*")
-            .unwrap();
-    static ref REGEX_TRAILING_SEP: Regex = Regex::new(r"[._\-–\s]+$").unwrap();
-    static ref REGEX_LEADING_SEP: Regex = Regex::new(r"^[_\-–\s]+").unwrap();
-    static ref REGEX_TRAILING_SEP2: Regex = Regex::new(r"[_\-–\s]+$").unwrap();
-    static ref REGEX_LEADING_ZERO: Regex = Regex::new(r"^0+").unwrap();
-    static ref REGEX_H1: Regex =
-        Regex::new(r"(?is)<h1(?:[^>]*)?>(.*?)</h1\s*>").unwrap();
-    static ref REGEX_H2: Regex =
-        Regex::new(r"(?is)<h2(?:[^>]*)?>(.*?)</h2\s*>").unwrap();
-    static ref REGEX_H3: Regex =
-        Regex::new(r"(?is)<h3(?:[^>]*)?>(.*?)</h3\s*>").unwrap();
-    static ref REGEX_STRIP_TAGS: Regex = Regex::new(r"<[^>]*>").unwrap();
-}
+static REGEX_NL_3PLUS: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n{3,}").unwrap());
+static REGEX_SPACE_2PLUS: Lazy<Regex> = Lazy::new(|| Regex::new(r"[ \t]{2,}").unwrap());
+static REGEX_NL_TRAIL_SPACE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\n[ \t]+").unwrap());
+static REGEX_TRAIL_SPACE_NL: Lazy<Regex> = Lazy::new(|| Regex::new(r"[ \t]+\n").unwrap());
+static REGEX_FAKE_CHAPTER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^chapter[\s_\-]*\d+$").unwrap());
+static REGEX_LEADING_CHAP: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module)\s*").unwrap());
+static REGEX_TRAILING_SEP: Lazy<Regex> = Lazy::new(|| Regex::new(r"[._\-–\s]+$").unwrap());
+static REGEX_LEADING_SEP: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[_\-–\s]+").unwrap());
+static REGEX_TRAILING_SEP2: Lazy<Regex> = Lazy::new(|| Regex::new(r"[_\-–\s]+$").unwrap());
+static REGEX_LEADING_ZERO: Lazy<Regex> = Lazy::new(|| Regex::new(r"^0+").unwrap());
+static REGEX_H1: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<h1(?:[^>]*)?>(.*?)</h1\s*>").unwrap());
+static REGEX_H2: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<h2(?:[^>]*)?>(.*?)</h2\s*>").unwrap());
+static REGEX_H3: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<h3(?:[^>]*)?>(.*?)</h3\s*>").unwrap());
+static REGEX_STRIP_TAGS: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]*>").unwrap());
 
 /// 解析 EPUB 文件，返回 EpubParseResult
 pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
@@ -67,12 +63,39 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
         .unwrap_or_default();
 
     // 2. OPF → 元数据 + manifest + spine
-    let (opf_result, _manifest, spine_hrefs) = parse_opf(&mut archive, &opf_path)?;
+    let (opf_result, manifest, spine_hrefs) = parse_opf(&mut archive, &opf_path)?;
 
     // 3. NCX → 标题映射
     let ncx_titles = parse_ncx(&mut archive, &opf_dir, &opf_result);
 
-    // 4. 逐章解析 spine
+    // 4. 提取图片（从 manifest 中的 image/* 类型）
+        let mut images: HashMap<String, String> = HashMap::new();
+        for (id, href) in &manifest {
+            // 需要从 manifest 获取 media-type，但我们当前没有存储 media-type
+            // 这里简单通过文件扩展名判断
+            if href.ends_with(".jpg")
+                || href.ends_with(".jpeg")
+                || href.ends_with(".png")
+                || href.ends_with(".gif")
+                || href.ends_with(".webp")
+                || href.ends_with(".svg")
+                || href.ends_with(".bmp")
+            {
+                let full_path = format!("{}{}", opf_dir, href);
+                let raw = try_get_entry(&mut archive, &full_path);
+                if !raw.is_empty() {
+                    images.insert(href.clone(), STANDARD.encode(raw.as_bytes()));
+                } else {
+                    // 尝试不加 opf_dir
+                    let raw = try_get_entry(&mut archive, href);
+                    if !raw.is_empty() {
+                        images.insert(href.clone(), STANDARD.encode(raw.as_bytes()));
+                    }
+                }
+            }
+        }
+
+    // 5. 逐章解析 spine
     let mut chapters: Vec<EpubChapter> = Vec::new();
 
     for (i, href) in spine_hrefs.iter().enumerate() {
@@ -145,7 +168,7 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
             opf_result.encoding
         },
         chapters,
-        images: HashMap::new(),
+        images,
     })
 }
 
@@ -200,6 +223,7 @@ struct OpfResult {
     author: String,
     encoding: String,
     ncx_href: Option<String>,
+    nav_xhtml_href: Option<String>,
 }
 
 fn parse_opf(
@@ -242,6 +266,7 @@ fn parse_opf(
                         let mut id = None;
                         let mut href = None;
                         let mut media_type = None;
+                        let mut properties: Option<String> = None;
                         for attr in e.attributes().flatten() {
                             let name = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
                             let val = std::str::from_utf8(&attr.value).unwrap_or("");
@@ -249,6 +274,7 @@ fn parse_opf(
                                 "id" => id = Some(val.to_string()),
                                 "href" => href = Some(val.to_string()),
                                 "media-type" => media_type = Some(val.to_string()),
+                                "properties" => properties = Some(val.to_string()),
                                 _ => {}
                             }
                         }
@@ -257,7 +283,14 @@ fn parse_opf(
                             if let Some(mt) = media_type {
                                 if mt.contains("dtbncx") || mt.contains("ncx") {
                                     if result.ncx_href.is_none() {
-                                        result.ncx_href = Some(href);
+                                        result.ncx_href = Some(href.clone());
+                                    }
+                                }
+                            }
+                            if let Some(pr) = properties {
+                                if pr.eq_ignore_ascii_case("nav") {
+                                    if result.nav_xhtml_href.is_none() {
+                                        result.nav_xhtml_href = Some(href.clone());
                                     }
                                 }
                             }
@@ -319,11 +352,11 @@ fn parse_ncx(
     opf_dir: &str,
     opf_result: &OpfResult,
 ) -> HashMap<String, String> {
-    let mut nav_point_depth: usize = 0;
     let mut ncx_titles = HashMap::new();
 
+    // 1. 尝试 EPUB2 NCX
     let ncx_href = match &opf_result.ncx_href {
-        Some(h) => h.clone(),
+        Some(h) => Some(h.clone()),
         None => {
             let mut found = None;
             for i in 0..archive.len() {
@@ -335,52 +368,88 @@ fn parse_ncx(
                     }
                 }
             }
-            match found {
-                Some(h) => h,
-                None => return ncx_titles,
-            }
+            found
         }
     };
 
-    let ncx_path = if ncx_href.starts_with(opf_dir.trim_end_matches('/'))
-        || ncx_href.starts_with('/')
-    {
-        ncx_href.clone()
-    } else {
-        format!("{}{}", opf_dir, ncx_href)
-    };
+    if let Some(href) = ncx_href {
+        let path = if href.starts_with(opf_dir.trim_end_matches('/'))
+            || href.starts_with('/')
+        {
+            href.clone()
+        } else {
+            format!("{}{}", opf_dir, href)
+        };
 
-    let mut content = String::new();
-    {
-        // 先尝试完整路径，再试原始 href（避免嵌套 match 导致借用冲突）
-        let mut found = None;
-        if let Ok(mut e) = archive.by_name(&ncx_path) {
-            let mut buf = String::new();
-            if e.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
-                found = Some(buf);
-            }
-        }
-        if found.is_none() {
-            if let Ok(mut e) = archive.by_name(&ncx_href) {
-                let mut buf = String::new();
-                if e.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
-                    found = Some(buf);
-                }
-            }
-        }
-        match found {
-            Some(s) => content = s,
-            None => return ncx_titles,
+        if let Some(content) = read_zip_entry(archive, &path) {
+            parse_ncx_xml(&content, &mut ncx_titles);
+        } else if let Some(content) = read_zip_entry(archive, &href) {
+            parse_ncx_xml(&content, &mut ncx_titles);
         }
     }
 
-    let mut reader = Reader::from_str(&content);
+    // 2. EPUB3 兜底：从 nav.xhtml 的 <nav epub:type="toc"> 提取
+    if ncx_titles.is_empty() {
+        let mut candidates: Vec<String> = Vec::new();
+        // 优先使用 manifest 中声明的 nav.xhtml（加上 opf_dir 前缀）
+        if let Some(nav_href) = &opf_result.nav_xhtml_href {
+            let full = if nav_href.starts_with(opf_dir.trim_end_matches('/'))
+                || nav_href.starts_with('/')
+            {
+                nav_href.clone()
+            } else {
+                format!("{}{}", opf_dir, nav_href)
+            };
+            candidates.push(full);
+        }
+        candidates.push(format!("{}nav.xhtml", opf_dir));
+        candidates.push("nav.xhtml".to_string());
+
+        for candidate in &candidates {
+            if let Some(content) = read_zip_entry(archive, candidate) {
+                parse_epub3_nav(&content, &mut ncx_titles);
+                if !ncx_titles.is_empty() {
+                    break;
+                }
+            }
+        }
+        // 最后兜底：扫描 ZIP 找任意 nav/toc xhtml
+        if ncx_titles.is_empty() {
+            let mut nav_candidates: Vec<String> = Vec::new();
+            for i in 0..archive.len() {
+                if let Ok(entry) = archive.by_index(i) {
+                    let name = entry.name().to_string();
+                    let name_lower = name.to_lowercase();
+                    if name_lower.ends_with(".xhtml") || name_lower.ends_with(".html") {
+                        if name_lower.contains("nav") || name_lower.contains("toc") {
+                            nav_candidates.push(name);
+                        }
+                    }
+                }
+            }
+            for candidate in nav_candidates {
+                if let Some(content) = read_zip_entry(archive, &candidate) {
+                    parse_epub3_nav(&content, &mut ncx_titles);
+                    if !ncx_titles.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    ncx_titles
+}
+
+/// 从 NCX XML 文本中解析目录，支持多级嵌套 navpoint
+fn parse_ncx_xml(content: &str, ncx_titles: &mut HashMap<String, String>) {
+    let mut reader = Reader::from_str(content);
     reader.config_mut().trim_text_start = true;
     reader.config_mut().trim_text_end = true;
     let mut buf = Vec::new();
 
-    let mut current_src: Option<String> = None;
-    let mut current_label: Option<String> = None;
+    // 栈跟踪每一层 navpoint 的 (src, label)
+    let mut stack: Vec<(Option<String>, Option<String>)> = Vec::new();
     let mut in_navlabel = false;
     let mut in_text = false;
 
@@ -390,56 +459,67 @@ fn parse_ncx(
                 let tag = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
                 match tag.as_str() {
                     "navpoint" => {
-                        if nav_point_depth == 0 { nav_point_depth = 1; } else { nav_point_depth += 1; }
+                        stack.push((None, None));
                     }
                     "content" => {
-                        if nav_point_depth == 1 {
-                            for attr in e.attributes().flatten() {
-                                let name = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
-                                if name.eq_ignore_ascii_case("src") {
-                                    let src = std::str::from_utf8(&attr.value).unwrap_or("");
-                                    current_src = Some(src.to_string());
+                        for attr in e.attributes().flatten() {
+                            let name = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                            if name.eq_ignore_ascii_case("src") {
+                                let src = std::str::from_utf8(&attr.value)
+                                    .unwrap_or("")
+                                    .to_string();
+                                    if let Some(top) = stack.last_mut() {
+                                    top.0 = Some(src);
                                 }
                             }
                         }
                     }
                     "navlabel" => {
-                        if nav_point_depth == 1 {
-                            in_navlabel = true;
-                            current_label = None;
-                        }
+                        in_navlabel = true;
                     }
                     "text" if in_navlabel => {
-                        if nav_point_depth == 1 {
-                            in_text = true;
-                        }
+                        in_text = true;
                     }
                     _ => {}
                 }
             }
             Ok(Event::Text(ref e)) => {
                 if in_text {
-                    current_label = Some(e.unescape().unwrap_or_default().to_string());
+                    if let Ok(t) = e.unescape() {
+                        let s = t.trim().to_string();
+                        if !s.is_empty() {
+                            if let Some(top) = stack.last_mut() {
+                                top.1 = Some(s);
+                            }
+                        }
+                    }
                 }
             }
             Ok(Event::End(ref e)) => {
                 let tag = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
                 match tag.as_str() {
-                    "navpoint" => {
-                        if nav_point_depth > 0 { nav_point_depth -= 1; }
-                        if let (Some(src), Some(label)) = (&current_src, &current_label) {
-                            let href = if let Some(hash_idx) = src.find('#') {
-                                src[..hash_idx].to_string()
-                            } else {
-                                src.clone()
-                            };
-                            ncx_titles.insert(href, label.trim().to_string());
-                        }
-                        current_src = None;
-                        current_label = None;
-                    }
                     "navlabel" => in_navlabel = false,
                     "text" => in_text = false,
+                    "navpoint" => {
+                        if let Some(top) = stack.pop() {
+                            let depth = stack.len() + 1;
+                            let src = top.0;
+                            let label = top.1;
+                            if depth == 1 {
+                                commit_ncx_title(ncx_titles, src, label);
+                            } else {
+                                // 嵌套层：把 src/label 合并回父层（若父层为空）
+                                if let Some(parent) = stack.last_mut() {
+                                    if parent.0.is_none() {
+                                        parent.0 = src;
+                                    }
+                                    if parent.1.is_none() {
+                                        parent.1 = label;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -449,8 +529,151 @@ fn parse_ncx(
         }
         buf.clear();
     }
+}
 
-    ncx_titles
+/// 提交 NCX 标题条目：去锚点、去 ./ 前缀、trim 空白
+fn commit_ncx_title(
+    ncx_titles: &mut HashMap<String, String>,
+    src: Option<String>,
+    label: Option<String>,
+) {
+    let (Some(s), Some(l)) = (src, label) else { return };
+    let mut href = s;
+    if let Some(hash_idx) = href.find('#') {
+        href = href[..hash_idx].to_string();
+    }
+    if let Some(stripped) = href.strip_prefix("./") {
+        href = stripped.to_string();
+    }
+    let trimmed = l.trim().to_string();
+    if !href.is_empty() && !trimmed.is_empty() && !ncx_titles.contains_key(&href) {
+        ncx_titles.insert(href, trimmed);
+    }
+}
+
+/// EPUB3 nav.xhtml 兜底解析：提取 <nav epub:type="toc"> <ol><li><a href="...">title</a>
+fn parse_epub3_nav(content: &str, ncx_titles: &mut HashMap<String, String>) {
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text_start = true;
+    reader.config_mut().trim_text_end = true;
+    let mut buf = Vec::new();
+
+    // li 栈：存储每层 li 的 (href, label)
+    let mut li_stack: Vec<(Option<String>, Option<String>)> = Vec::new();
+    let mut current_href: Option<String> = None;
+    let mut current_text = String::new();
+    let mut in_toc_nav: i32 = 0;
+    let mut nav_type: Option<String> = None;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(ref e)) => {
+                let tag = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+                match tag.as_str() {
+                    "nav" => {
+                        // 支持多种 epub:type 命名空间
+                        let mut t: Option<String> = None;
+                        for attr in e.attributes().flatten() {
+                            let name = std::str::from_utf8(attr.key.as_ref())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            if name == "type"
+                                || name.ends_with("type")
+                                || name == "epub:type"
+                            {
+                                let v = std::str::from_utf8(&attr.value)
+                                    .unwrap_or("")
+                                    .to_lowercase();
+                                t = Some(v);
+                                break;
+                            }
+                        }
+                        nav_type = t;
+                        if nav_type.as_deref() == Some("toc") {
+                            in_toc_nav = 1;
+                        }
+                    }
+                    "li" if in_toc_nav > 0 => {
+                        li_stack.push((None, None));
+                        current_href = None;
+                        current_text.clear();
+                    }
+                    "a" if in_toc_nav > 0 => {
+                        for attr in e.attributes().flatten() {
+                            let name = std::str::from_utf8(attr.key.as_ref())
+                                .unwrap_or("")
+                                .to_lowercase();
+                            if name == "href" {
+                                let v = std::str::from_utf8(&attr.value)
+                                    .unwrap_or("")
+                                    .to_string();
+                                current_href = Some(v.clone());
+                                if let Some(top) = li_stack.last_mut() {
+                                    top.0 = Some(v);
+                                }
+                                break;
+                            }
+                        }
+                        current_text.clear();
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Text(ref e)) => {
+                if in_toc_nav > 0 {
+                    if let Ok(t) = e.unescape() {
+                        current_text.push_str(t.as_ref());
+                    }
+                }
+            }
+            Ok(Event::End(ref e)) => {
+                let tag = String::from_utf8_lossy(e.name().as_ref()).to_lowercase();
+                match tag.as_str() {
+                    "nav" => {
+                        if nav_type.as_deref() == Some("toc") {
+                            in_toc_nav = 0;
+                        }
+                        nav_type = None;
+                    }
+                    "li" if in_toc_nav > 0 => {
+                        if let Some(top) = li_stack.pop() {
+                            let depth = li_stack.len() + 1;
+                            let src = if top.0.is_some() { top.0 } else { current_href.clone() };
+                            let label = current_text.trim().to_string();
+                            if depth == 1 {
+                                commit_ncx_title(ncx_titles, src, Some(label));
+                            } else if let Some(parent) = li_stack.last_mut() {
+                                if parent.0.is_none() {
+                                    parent.0 = src;
+                                }
+                                if parent.1.is_none() && !label.is_empty() {
+                                    parent.1 = Some(label);
+                                }
+                            }
+                        }
+                    }
+                    "a" if in_toc_nav > 0 => {
+                        if let Some(top) = li_stack.last_mut() {
+                            top.1 = Some(current_text.trim().to_string());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(_) => break,
+            _ => {}
+        }
+        buf.clear();
+    }
+}
+
+/// 从 ZIP 读取指定 entry 的完整文本
+fn read_zip_entry(archive: &mut ZipArchive<fs::File>, path: &str) -> Option<String> {
+    let mut entry = archive.by_name(path).ok()?;
+    let mut buf = String::new();
+    entry.read_to_string(&mut buf).ok()?;
+    if buf.is_empty() { None } else { Some(buf) }
 }
 
 // ==================== HTML 内容获取 ====================

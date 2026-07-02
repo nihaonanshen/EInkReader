@@ -11,6 +11,7 @@ import org.json.JSONObject;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 
 /**
@@ -77,21 +78,22 @@ public class NativeBridge {
      */
     public static String detectEncoding(File file) {
         if (sLibraryLoaded) {
+            java.io.FileInputStream fis = null;
             try {
                 // 读取文件前 64KB 用于检测
                 int readSize = (int) Math.min(file.length(), 65536);
                 byte[] header = new byte[readSize];
-                java.io.FileInputStream fis = new java.io.FileInputStream(file);
-                try {
-                    int actualRead = fis.read(header, 0, readSize);
-                    if (actualRead > 0) {
-                        return nativeDetectEncoding(header, actualRead);
-                    }
-                } finally {
-                    fis.close();
+                fis = new java.io.FileInputStream(file);
+                int actualRead = fis.read(header, 0, readSize);
+                if (actualRead > 0) {
+                    return nativeDetectEncoding(header, actualRead);
                 }
             } catch (Exception e) {
                 Log.w(TAG, "Rust encoding detection failed, falling back", e);
+            } finally {
+                if (fis != null) {
+                    try { fis.close(); } catch (Exception ignored) { }
+                }
             }
         }
         // Fallback to Java implementation
@@ -142,6 +144,7 @@ public class NativeBridge {
         result.chapters = new ArrayList<>();
 
         JSONArray chapters = root.getJSONArray("chapters");
+        StringBuilder fullBuilder = new StringBuilder();  // ★ 使用 StringBuilder，避免 O(n²) 拼接
         for (int i = 0; i < chapters.length(); i++) {
             JSONObject ch = chapters.getJSONObject(i);
             String title = ch.optString("title", "第" + (i + 1) + "章");
@@ -153,13 +156,9 @@ public class NativeBridge {
             chapter.setIndex(i);
             result.chapters.add(chapter);
 
-            // 构建全文
-            if (result.fullContent == null) {
-                result.fullContent = content;
-            } else {
-                result.fullContent += content;
-            }
+            fullBuilder.append(content);
         }
+        result.fullContent = fullBuilder.toString();
 
         return result;
     }
@@ -205,6 +204,25 @@ public class NativeBridge {
             Chapter chapter = new Chapter(title, content);
             chapter.setIndex(i);
             result.chapters.add(chapter);
+        }
+
+        // Parse images
+                if (root.has("images")) {
+                    JSONObject imagesObj = root.getJSONObject("images");
+                    result.images = new HashMap<>();
+                    // Android JSONObject 使用 keys() 返回 Enumeration，需转换为 Iterator
+                    java.util.Iterator<String> keys = imagesObj.keys();
+                    while (keys.hasNext()) {
+                        String key = keys.next();
+                        result.images.put(key, imagesObj.getString(key));
+                    }
+                }
+
+        // 如果 Rust 没有没有返回 title，使用文件名兜底（file 此时用于兜底）
+        if ((result.title == null || result.title.isEmpty()) && file != null) {
+            String name = file.getName();
+            int dot = name.lastIndexOf('.');
+            result.title = dot > 0 ? name.substring(0, dot) : name;
         }
 
         return result;

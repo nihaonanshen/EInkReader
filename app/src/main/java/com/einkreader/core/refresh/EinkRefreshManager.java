@@ -95,19 +95,32 @@ public class EinkRefreshManager {
 
         if (view != null) {
             view.invalidate();
-            // 全刷：画白色背景再重绘
+            // 全刷：画白色背景再重绘，等下一帧完成后再通知完成
             view.post(new Runnable() {
                 @Override
                 public void run() {
                     if (view != null) {
                         view.postInvalidate();
                     }
+                    // 再下一帧后通知回调，让"全刷完成"信号与屏幕实际同步
+                    if (view != null) {
+                        view.post(new Runnable() {
+                            @Override
+                            public void run() {
+                                if (callback != null) callback.onRefreshComplete(RefreshMode.FULL);
+                                currentMode = RefreshMode.PARTIAL;
+                            }
+                        });
+                    } else {
+                        if (callback != null) callback.onRefreshComplete(RefreshMode.FULL);
+                        currentMode = RefreshMode.PARTIAL;
+                    }
                 }
             });
+        } else {
+            if (callback != null) callback.onRefreshComplete(currentMode);
+            currentMode = RefreshMode.PARTIAL;
         }
-
-        if (callback != null) callback.onRefreshComplete(currentMode);
-        currentMode = RefreshMode.PARTIAL;
     }
 
     /**
@@ -118,10 +131,24 @@ public class EinkRefreshManager {
         if (callback != null) callback.onRefreshStart(currentMode);
 
         if (view != null) {
-            view.postInvalidate();
+            view.post(new Runnable() {
+                @Override
+                public void run() {
+                    view.postInvalidate();
+                    // 等下一帧后再通知完成
+                    view.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (callback != null) callback.onRefreshComplete(RefreshMode.PARTIAL);
+                            currentMode = RefreshMode.PARTIAL;
+                        }
+                    });
+                }
+            });
+        } else {
+            if (callback != null) callback.onRefreshComplete(currentMode);
+            currentMode = RefreshMode.PARTIAL;
         }
-
-        if (callback != null) callback.onRefreshComplete(currentMode);
     }
 
     public void setFullRefreshInterval(int pages) {

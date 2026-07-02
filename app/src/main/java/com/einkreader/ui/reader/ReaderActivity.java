@@ -1,6 +1,7 @@
 package com.einkreader.ui.reader;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.Color;
@@ -14,14 +15,23 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
+import android.widget.FrameLayout;
+import android.widget.ListView;
+import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import com.einkreader.EInkReaderApp;
 import com.einkreader.R;
+import com.einkreader.core.FeatureFlags;
+import com.einkreader.core.NativeBridge;
 import com.einkreader.core.model.Chapter;
 import com.einkreader.core.parser.EpubParser;
 import com.einkreader.core.parser.TxtParser;
 import com.einkreader.core.refresh.EinkRefreshManager;
+import com.einkreader.core.storage.BookStorage;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -29,37 +39,64 @@ import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.Set;
 
 public class ReaderActivity extends Activity {
 
     private static final String PREFS_NAME = "eink_reader_prefs";
+
     private ReaderView readerView;
-    private View topStatusBar, bottomMenu;
-    private TextView statusTime, statusChapter, statusBattery, statusPage;
-    private TextView btnBack, btnToc, btnFontMinus, btnFontPlus, btnSettings;
+    private View topStatusBar;
+    private View bottomMenu;
+    private View fullOverlay;
+    private View loadingOverlay;
+    // 翻页模式的目录/书签
+    private TextView fullTocText;
+    private TextView fullTocPage;
+    private TextView fullBookmarkText;
+    private TextView fullBookmarkPage;
+    private android.widget.FrameLayout fullTocContainer;
+    private android.widget.FrameLayout fullBookmarkContainer;
+
+    // 目录/书签的翻页状态
+    private java.util.List<String> tocItems = new java.util.ArrayList<>();
+    private int tocPageSize = 15;  // 每页显示条目数（动态计算）
+    private int tocItemHeightPx = 72;  // 每个条目的高度（像素，动态计算）
+    private int tocCurrentPage = 0;
+    private java.util.List<String> bookmarkItems = new java.util.ArrayList<>();
+    private int bookmarkCurrentPage = 0;
+
+    private TextView statusTime, statusChapter, statusBattery;
+    private TextView btnBack, btnToc, btnBookmark, btnSettings, btnShowLog;
+    private TextView btnFontMinus, btnFontPlus, btnBrightMinus, btnBrightPlus, btnFullRefresh;
+    private TextView progressLabel, loadingFilename, fullOverlayTitle;
+    private TextView fullOverlayBack;
+    private SeekBar progressSeekBar;
+
     private EinkRefreshManager refreshManager;
     private List<Chapter> chapters;
     private int currentChapterIndex = 0;
     private SharedPreferences prefs;
     private boolean menuVisible = false;
     private String filePath;
-    private String fileKey;  // ★ I-7: 文件哈希标识（替代路径，防止文件移动后进度丢失）
+    private String fileKey;
     private Handler uiHandler;
-    private long readingStartTime; // 本次阅读开始时间
-    private volatile boolean isDestroyed = false;  // ★ I-5: 生命周期标记
+    private long readingStartTime;
+    private volatile boolean isDestroyed = false;
+    private volatile boolean bookLoaded = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        DebugLog.init();
+        DebugLog.log("Lifecycle", "onCreate: savedInstanceState=" + (savedInstanceState != null));
         requestWindowFeature(Window.FEATURE_NO_TITLE);
-        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN, WindowManager.LayoutParams.FLAG_FULLSCREEN);
-
-        // ★ 告诉系统：我自己处理音量键
+        getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                WindowManager.LayoutParams.FLAG_FULLSCREEN);
         setVolumeControlStream(AudioManager.STREAM_MUSIC);
-
         setContentView(R.layout.activity_reader);
+
+        applyImmersiveMode();
 
         uiHandler = new Handler(Looper.getMainLooper());
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
@@ -70,146 +107,484 @@ public class ReaderActivity extends Activity {
         getWindow().setAttributes(lp);
 
         refreshManager = new EinkRefreshManager(this);
-        // 用 Log 记录 sysfs 检测结果（避免传 null 丢失信息）
         refreshManager.initialize(new EinkRefreshManager.RefreshCallback() {
             @Override public void onRefreshStart(EinkRefreshManager.RefreshMode mode) {}
             @Override public void onRefreshComplete(EinkRefreshManager.RefreshMode mode) {}
-            @Override public void onModeDetected(Set<EinkRefreshManager.RefreshMode> modes) {
-                DebugLog.log("Eink", "刷新模式: " + modes);
-            }
-            @Override public void onSysfsUnavailable() {
-                DebugLog.log("Eink", "sysfs 不可用，使用标准刷新");
-            }
+            @Override public void onModeDetected(Set<EinkRefreshManager.RefreshMode> modes) {}
+            @Override public void onSysfsUnavailable() {}
         });
 
         readerView = (ReaderView) findViewById(R.id.reader_view);
         topStatusBar = findViewById(R.id.top_status_bar);
         bottomMenu = findViewById(R.id.bottom_menu);
+
+        fullOverlay = findViewById(R.id.full_overlay);
+        fullTocContainer = (android.widget.FrameLayout) findViewById(R.id.full_toc_container);
+        fullTocText = (TextView) findViewById(R.id.full_toc_text);
+        fullTocPage = (TextView) findViewById(R.id.full_toc_page);
+        fullBookmarkContainer = (android.widget.FrameLayout) findViewById(R.id.full_bookmark_container);
+        fullBookmarkText = (TextView) findViewById(R.id.full_bookmark_text);
+        fullBookmarkPage = (TextView) findViewById(R.id.full_bookmark_page);
+        fullOverlayBack = (TextView) findViewById(R.id.full_overlay_back);
+        fullOverlayTitle = (TextView) findViewById(R.id.full_overlay_title);
+        if (fullOverlayBack != null) {
+            fullOverlayBack.setOnClickListener(v -> exitFullOverlay());
+        }
+        // 目录/书签容器触摸翻页
+        android.view.View.OnTouchListener touchListener = (v, event) -> {
+            int w = v.getWidth();
+            int h = v.getHeight();
+            float x = event.getX();
+            float y = event.getY();
+            switch (event.getAction()) {
+                case android.view.MotionEvent.ACTION_UP:
+                    float density = getResources().getDisplayMetrics().density;
+                    int paddingPx = (int)(16 * density);  // TextView 的 padding 是 16dp
+                    if (fullOverlayMode == FullOverlayMode.TOC) {
+                        // 计算点击的条目位置（考虑容器内 TextView 的实际布局）
+                        int textViewTop = 0;
+                        if (fullTocText != null) {
+                            int[] loc = new int[2];
+                            fullTocText.getLocationOnScreen(loc);
+                            int[] vloc = new int[2];
+                            v.getLocationOnScreen(vloc);
+                            textViewTop = loc[1] - vloc[1];
+                        }
+                        int itemTop = textViewTop + paddingPx;
+                        int row = (int)((y - itemTop) / tocItemHeightPx);
+                        int startIdx = tocCurrentPage * tocPageSize;
+                        int clickIdx = startIdx + row;
+                        if (clickIdx >= startIdx && clickIdx < startIdx + tocPageSize && clickIdx < tocItems.size() && chapters != null && clickIdx < chapters.size()) {
+                            DebugLog.log("TOC", "点击目录项: row=" + row + " idx=" + clickIdx + " item=" + tocItems.get(clickIdx) + " y=" + y + " itemTop=" + itemTop + " itemH=" + tocItemHeightPx);
+                            switchChapterTo(clickIdx);
+                            exitFullOverlay();
+                        } else if (x < w * 0.33f) {
+                            tocPrevPage();
+                        } else if (x > w * 0.67f) {
+                            tocNextPage();
+                        } else {
+                            tocNextPage();
+                        }
+                    } else if (fullOverlayMode == FullOverlayMode.BOOKMARK) {
+                        int textViewTop = 0;
+                        if (fullBookmarkText != null) {
+                            int[] loc = new int[2];
+                            fullBookmarkText.getLocationOnScreen(loc);
+                            int[] vloc = new int[2];
+                            v.getLocationOnScreen(vloc);
+                            textViewTop = loc[1] - vloc[1];
+                        }
+                        int itemTop = textViewTop + paddingPx;
+                        int row = (int)((y - itemTop) / tocItemHeightPx);
+                        int startIdx = bookmarkCurrentPage * tocPageSize;
+                        int clickIdx = startIdx + row;
+                        if (clickIdx >= startIdx && clickIdx < startIdx + tocPageSize && clickIdx < bookmarkItems.size()) {
+                            DebugLog.log("Bookmark", "点击书签项: row=" + row + " idx=" + clickIdx);
+                            jumpToBookmark(clickIdx);
+                            exitFullOverlay();
+                        } else if (x < w * 0.33f) {
+                            bookmarkPrevPage();
+                        } else if (x > w * 0.67f) {
+                            bookmarkNextPage();
+                        } else {
+                            bookmarkNextPage();
+                        }
+                    }
+                    break;
+            }
+            return true;
+        };
+        if (fullTocContainer != null) fullTocContainer.setOnTouchListener(touchListener);
+        if (fullBookmarkContainer != null) fullBookmarkContainer.setOnTouchListener(touchListener);
+
+        loadingOverlay = findViewById(R.id.loading_overlay);
+        loadingFilename = (TextView) findViewById(R.id.loading_filename);
+
         statusTime = (TextView) findViewById(R.id.status_time);
         statusChapter = (TextView) findViewById(R.id.status_chapter);
         statusBattery = (TextView) findViewById(R.id.status_battery);
-        statusPage = (TextView) findViewById(R.id.status_page);
+
         btnBack = (TextView) findViewById(R.id.btn_back);
         btnToc = (TextView) findViewById(R.id.btn_toc);
+        btnBookmark = (TextView) findViewById(R.id.btn_bookmark);
+        btnSettings = (TextView) findViewById(R.id.btn_settings);
+        btnShowLog = (TextView) findViewById(R.id.btn_show_log);
+
         btnFontMinus = (TextView) findViewById(R.id.btn_font_minus);
         btnFontPlus = (TextView) findViewById(R.id.btn_font_plus);
-        btnSettings = (TextView) findViewById(R.id.btn_settings);
+        btnBrightMinus = (TextView) findViewById(R.id.btn_bright_minus);
+        btnBrightPlus = (TextView) findViewById(R.id.btn_bright_plus);
+        btnFullRefresh = (TextView) findViewById(R.id.btn_full_refresh);
 
-        btnBack.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) { finish(); }
+        progressSeekBar = (SeekBar) findViewById(R.id.progress_seekbar);
+        progressLabel = (TextView) findViewById(R.id.progress_label);
+
+        progressSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                if (fromUser && readerView != null) {
+                    int total = readerView.getTotalPages();
+                    if (total > 0) {
+                        int targetPage = (int) (progress * (total - 1) / 1000f);
+                        if (targetPage >= 0 && targetPage < total) {
+                            readerView.goToPage(targetPage);
+                            updateProgressLabel();
+                        }
+                    }
+                }
+            }
+            @Override public void onStartTrackingTouch(SeekBar seekBar) {}
+            @Override public void onStopTrackingTouch(SeekBar seekBar) {}
         });
-        btnToc.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) { toggleMenu(false); openToc(); }
+
+        btnBack.setOnClickListener(v -> finish());
+        btnToc.setOnClickListener(v -> { openFullOverlay(FullOverlayMode.TOC); loadTocList(); });
+        btnBookmark.setOnClickListener(v -> { addBookmark(); openFullOverlay(FullOverlayMode.BOOKMARK); loadBookmarks(); });
+        btnSettings.setOnClickListener(v -> {
+            Intent intent = new Intent(ReaderActivity.this, ReadingSettingsActivity.class);
+            startActivity(intent);
         });
-        btnFontMinus.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) { adjustFontSize(-1f); }
+        btnShowLog.setOnClickListener(v -> showLogDialog());
+        btnFontMinus.setOnClickListener(v -> adjustFontSize(-1));
+        btnFontPlus.setOnClickListener(v -> adjustFontSize(1));
+        btnBrightMinus.setOnClickListener(v -> adjustBrightness(-0.1f));
+        btnBrightPlus.setOnClickListener(v -> adjustBrightness(0.1f));
+        btnFullRefresh.setOnClickListener(v -> {
+            if (readerView != null) readerView.performFullRefresh();
         });
-        btnFontPlus.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) { adjustFontSize(1f); }
-        });
-        btnSettings.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                toggleMenu(false);
-                startActivityForResult(new Intent(ReaderActivity.this, ReadingSettingsActivity.class), 2001);
+
+        float savedSize = prefs.getFloat("text_size", 28f);
+
+        readerView.setOnPageChangeListener(new ReaderView.OnPageChangeListener() {
+            @Override public void onPageChanged(int pageIndex, int totalPages) {
+                DebugLog.log("Page", "onPageChanged: " + pageIndex + "/" + totalPages);
+                if (!bookLoaded) return;
+                saveProgress();
+                updateStatusBar();
+                updateProgressBar(readerView.getCurrentPage(), readerView.getTotalPages());
+                updateProgressLabel();
+                if (refreshManager != null) refreshManager.onPageTurn(readerView);
+            }
+
+            @Override public void onChapterChanged(int chapterIndex) {
+                DebugLog.log("Chapter", "onChapterChanged: chapter=" + chapterIndex);
+                if (!bookLoaded) return;
+                updateProgressBar(readerView.getCurrentPage(), readerView.getTotalPages());
+                updateProgressLabel();
+            }
+
+            @Override public void onTapCenter() {
+                DebugLog.log("UI", "onTapCenter: menuVisible=" + menuVisible);
+                if (!bookLoaded) return;
+                toggleMenu(!menuVisible);
+            }
+
+            @Override public void onNeedPrevChapter() {
+                DebugLog.log("Nav", "onNeedPrevChapter");
+                if (!bookLoaded) return;
+                goToPrevChapter();
+            }
+            @Override public void onNeedNextChapter() {
+                DebugLog.log("Nav", "onNeedNextChapter");
+                if (!bookLoaded) return;
+                goToNextChapter();
             }
         });
 
-        // 夜间模式按钮
-        final TextView btnNight = (TextView) findViewById(R.id.btn_night);
-        if (btnNight != null) {
-            final boolean isNight = prefs.getBoolean("night_mode", false);
-            btnNight.setText(isNight ? "日间" : "夜间");
-            if (isNight) { readerView.setNightMode(true); }
-            btnNight.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    boolean nowNight = !prefs.getBoolean("night_mode", false);
-                    prefs.edit().putBoolean("night_mode", nowNight).apply();
-                    readerView.setNightMode(nowNight);
-                    btnNight.setText(nowNight ? "日间" : "夜间");
-                    // 同步更新顶部状态栏和底部菜单颜色
-                    int menuBg = nowNight ? 0xFF222222 : Color.WHITE;
-                    int menuFg = nowNight ? 0xFFBBBBBB : Color.BLACK;
-                    topStatusBar.setBackgroundColor(menuBg);
-                    bottomMenu.setBackgroundColor(menuBg);
-                    for (int id : new int[]{R.id.status_time, R.id.status_chapter, R.id.status_page, R.id.status_battery,
-                            R.id.btn_back, R.id.btn_toc, R.id.btn_font_minus, R.id.btn_font_plus, R.id.btn_settings, R.id.btn_night}) {
-                        View menuItem = findViewById(id);
-                        if (menuItem instanceof TextView) ((TextView) menuItem).setTextColor(menuFg);
-                    }
-                    toggleMenu(false);
-                }
-            });
-        }
-
-        readerView.setOnPageChangeListener(new ReaderView.OnPageChangeListener() {
-            @Override public void onPageChanged(int p, int t) { saveProgress(); updateStatusBar(); if (refreshManager != null) refreshManager.onPageTurn(readerView); }
-            @Override public void onChapterChanged(int i) { }
-            @Override public void onTapCenter() { toggleMenu(!menuVisible); }
-            @Override public void onNeedPrevChapter() { goToPrevChapter(); }
-            @Override public void onNeedNextChapter() { goToNextChapter(); }
-        });
-
-        // 取回焦点确保接收按键
         readerView.setFocusable(true);
         readerView.setFocusableInTouchMode(true);
         readerView.requestFocus();
 
-        // 记录阅读开始时间
         readingStartTime = System.currentTimeMillis();
-
         loadBook();
     }
 
-    // ★ dispatchKeyEvent：在系统处理音量键之前最外层拦截
+    private void adjustFontSize(int delta) {
+        float current = prefs.getFloat("text_size", 28f);
+        float next = Math.max(14f, Math.min(64f, current + delta));
+        prefs.edit().putFloat("text_size", next).apply();
+        if (readerView != null) readerView.setTextSize(next);
+    }
+
+    private void adjustBrightness(float delta) {
+        WindowManager.LayoutParams lp = getWindow().getAttributes();
+        float cur = lp.screenBrightness > 0 ? lp.screenBrightness : 0.5f;
+        float next = Math.max(0.05f, Math.min(1.0f, cur + delta));
+        lp.screenBrightness = next;
+        getWindow().setAttributes(lp);
+        prefs.edit().putFloat("screen_brightness", next).apply();
+    }
+
+    private enum FullOverlayMode { NONE, TOC, BOOKMARK }
+    private FullOverlayMode fullOverlayMode = FullOverlayMode.NONE;
+
+    private void openFullOverlay(FullOverlayMode mode) {
+        fullOverlayMode = mode;
+        if (fullOverlay != null) fullOverlay.setVisibility(View.VISIBLE);
+        if (fullTocContainer != null) fullTocContainer.setVisibility(mode == FullOverlayMode.TOC ? View.VISIBLE : View.GONE);
+        if (fullBookmarkContainer != null) fullBookmarkContainer.setVisibility(mode == FullOverlayMode.BOOKMARK ? View.VISIBLE : View.GONE);
+        if (fullOverlayTitle != null) {
+            fullOverlayTitle.setText(mode == FullOverlayMode.TOC ? "目录" : "书签");
+        }
+        // 全屏时隐藏状态栏和底部菜单，避免遮挡
+        if (topStatusBar != null) topStatusBar.setVisibility(View.GONE);
+        if (bottomMenu != null) bottomMenu.setVisibility(View.GONE);
+        // 恢复 ReaderView 铺满
+        FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) readerView.getLayoutParams();
+        if (lp != null) {
+            lp.topMargin = 0;
+            lp.bottomMargin = 0;
+            readerView.setLayoutParams(lp);
+        }
+    }
+
+    private void exitFullOverlay() {
+        fullOverlayMode = FullOverlayMode.NONE;
+        if (fullOverlay != null) fullOverlay.setVisibility(View.GONE);
+        // 恢复菜单显示
+        if (menuVisible) {
+            if (topStatusBar != null) topStatusBar.setVisibility(View.VISIBLE);
+            if (bottomMenu != null) bottomMenu.setVisibility(View.VISIBLE);
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) readerView.getLayoutParams();
+            if (lp != null) {
+                lp.topMargin = (int) (32 * getResources().getDisplayMetrics().density);
+                lp.bottomMargin = (int) (160 * getResources().getDisplayMetrics().density);
+                readerView.setLayoutParams(lp);
+            }
+        }
+    }
+
+    private void loadTocList() {
+        if (chapters == null || chapters.isEmpty()) {
+            Toast.makeText(this, "暂无章节", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        // ★ 动态计算目录布局，适配不同屏幕尺寸
+        calculateTocLayout();
+        ArrayList<String> titles = new ArrayList<>();
+        for (int i = 0; i < chapters.size(); i++) {
+            Chapter c = chapters.get(i);
+            String t = c.getTitle() != null ? c.getTitle() : ("第" + (i + 1) + "章");
+            if (i == currentChapterIndex) t = "▶ " + t;
+            titles.add(t);
+        }
+        tocItems = titles;
+        tocCurrentPage = 0;
+        renderTocPage();
+    }
+
+    /**
+     * ★ 动态计算目录每页条目数和行高
+     * 根据屏幕高度、字号、行距自动计算，适配不同尺寸的墨水屏
+     */
+    private void calculateTocLayout() {
+        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+        float density = dm.density;
+        int screenHeight = dm.heightPixels;
+
+        // 标题栏高度: 48dp
+        int headerHeight = (int)(48 * density);
+        // 可用高度 = 屏幕高度 - 标题栏
+        int availHeight = screenHeight - headerHeight;
+        // TextView padding: 16dp 上下
+        int padding = (int)(16 * density * 2);
+        int textAvailHeight = availHeight - padding;
+        if (textAvailHeight < 200) textAvailHeight = 200; // 安全下限
+
+        // 目录文字大小: 18sp
+        float tocTextSizeSp = 18f;
+        float tocTextSizePx = tocTextSizeSp * density;
+        // 行距额外: 8dp
+        float lineSpacingExtraPx = 8 * density;
+        // 单行高度 = 字号 * 字体metrics(约1.2倍) + 行距额外
+        float lineHeightPx = tocTextSizePx * 1.2f + lineSpacingExtraPx;
+        // 每个条目占 2 行（1行文字 + 1行空行 \n\n）
+        tocItemHeightPx = (int)(lineHeightPx * 2);
+        if (tocItemHeightPx < 30) tocItemHeightPx = 30;
+
+        // 每页条目数 = 可用高度 / 条目高度（向下取整，留底部页码空间）
+        int pageLabelHeight = (int)(30 * density); // 底部页码预留
+        int usableHeight = textAvailHeight - pageLabelHeight;
+        tocPageSize = usableHeight / tocItemHeightPx;
+        if (tocPageSize < 5) tocPageSize = 5;
+        if (tocPageSize > 30) tocPageSize = 30;
+
+        DebugLog.log("TOC", "calculateTocLayout: screenH=" + screenHeight + " density=" + density
+                + " headerH=" + headerHeight + " availH=" + availHeight + " textAvailH=" + textAvailHeight
+                + " lineH=" + lineHeightPx + " itemH=" + tocItemHeightPx + " pageSize=" + tocPageSize);
+    }
+
+    private void renderTocPage() {
+        if (fullTocText == null || fullTocPage == null) return;
+        int totalPages = (tocItems.size() + tocPageSize - 1) / tocPageSize;
+        if (tocCurrentPage >= totalPages) tocCurrentPage = totalPages - 1;
+        if (tocCurrentPage < 0) tocCurrentPage = 0;
+        int start = tocCurrentPage * tocPageSize;
+        int end = Math.min(start + tocPageSize, tocItems.size());
+        StringBuilder sb = new StringBuilder();
+        for (int i = start; i < end; i++) {
+            sb.append(tocItems.get(i));
+            if (i < end - 1) sb.append("\n\n");
+        }
+        fullTocText.setText(sb.toString());
+        fullTocPage.setText((tocCurrentPage + 1) + " / " + totalPages);
+    }
+
+    private void tocPrevPage() {
+        if (tocCurrentPage > 0) { tocCurrentPage--; renderTocPage(); }
+    }
+
+    private void tocNextPage() {
+        int totalPages = (tocItems.size() + tocPageSize - 1) / tocPageSize;
+        if (tocCurrentPage < totalPages - 1) { tocCurrentPage++; renderTocPage(); }
+    }
+
+    private void loadBookmarks() {
+        List<String> list = new ArrayList<>();
+        try {
+            SharedPreferences bm = getSharedPreferences("bookmarks_" + fileKey, MODE_PRIVATE);
+            java.util.Set<String> keys = bm.getAll().keySet();
+            for (String k : keys) {
+                String v = bm.getString(k, "");
+                list.add(k + " : " + v);
+            }
+        } catch (Exception ignored) {}
+        bookmarkItems = new ArrayList<>(list);
+        bookmarkCurrentPage = 0;
+        renderBookmarkPage();
+    }
+
+    private void renderBookmarkPage() {
+        if (fullBookmarkText == null || fullBookmarkPage == null) return;
+        int totalPages = (bookmarkItems.size() + tocPageSize - 1) / tocPageSize;
+        if (bookmarkCurrentPage >= totalPages) bookmarkCurrentPage = totalPages - 1;
+        if (bookmarkCurrentPage < 0) bookmarkCurrentPage = 0;
+        int start = bookmarkCurrentPage * tocPageSize;
+        int end = Math.min(start + tocPageSize, bookmarkItems.size());
+        StringBuilder sb = new StringBuilder();
+        for (int i = start; i < end; i++) {
+            sb.append(bookmarkItems.get(i));
+            if (i < end - 1) sb.append("\n\n");
+        }
+        if (bookmarkItems.isEmpty()) sb.append("暂无书签");
+        fullBookmarkText.setText(sb.toString());
+        fullBookmarkPage.setText((bookmarkCurrentPage + 1) + " / " + Math.max(1, totalPages));
+    }
+
+    private void bookmarkPrevPage() {
+        if (bookmarkCurrentPage > 0) { bookmarkCurrentPage--; renderBookmarkPage(); }
+    }
+
+    private void bookmarkNextPage() {
+        int totalPages = (bookmarkItems.size() + tocPageSize - 1) / tocPageSize;
+        if (bookmarkCurrentPage < totalPages - 1) { bookmarkCurrentPage++; renderBookmarkPage(); }
+    }
+
+    private void jumpToBookmark(int idx) {
+        if (chapters == null) return;
+        try {
+            SharedPreferences bm = getSharedPreferences("bookmarks_" + fileKey, MODE_PRIVATE);
+            int i = 0;
+            for (String k : bm.getAll().keySet()) {
+                try {
+                    if (i == idx) {
+                        int ch = Integer.parseInt(k);
+                        switchChapterTo(ch);
+                        return;
+                    }
+                    i++;
+                } catch (NumberFormatException ignore) {
+                }
+            }
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void addBookmark() {
+        if (fileKey == null) return;
+        try {
+            SharedPreferences bm = getSharedPreferences("bookmarks_" + fileKey, MODE_PRIVATE);
+            String title = "";
+            if (chapters != null && currentChapterIndex < chapters.size()) {
+                Chapter c = chapters.get(currentChapterIndex);
+                title = c.getTitle() != null ? c.getTitle() : ("第" + (currentChapterIndex + 1) + "章");
+            }
+            title += " P" + (readerView != null ? readerView.getCurrentPage() : 0);
+            bm.edit().putString(String.valueOf(currentChapterIndex) + "_" +
+                    (readerView != null ? readerView.getCurrentPage() : 0), title).apply();
+            Toast.makeText(this, "已加书签", Toast.LENGTH_SHORT).show();
+        } catch (Exception e) {
+            Toast.makeText(this, "书签保存失败", Toast.LENGTH_SHORT).show();
+        }
+    }
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         int c = event.getKeyCode();
         boolean isVolumeKey = (c == KeyEvent.KEYCODE_VOLUME_UP || c == KeyEvent.KEYCODE_VOLUME_DOWN);
-        boolean isPageKey = (c == KeyEvent.KEYCODE_PAGE_UP || c == KeyEvent.KEYCODE_PAGE_DOWN);
+        boolean isPageKey   = (c == KeyEvent.KEYCODE_PAGE_UP   || c == KeyEvent.KEYCODE_PAGE_DOWN);
         if (isVolumeKey || isPageKey) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                DebugLog.log("Key", "dispatch: " + (c == KeyEvent.KEYCODE_VOLUME_UP || c == KeyEvent.KEYCODE_PAGE_UP ? "上一页" : "下一页"));
+                // 全屏目录/书签覆盖层显示时，翻页键用于翻目录
+                if (fullOverlayMode == FullOverlayMode.TOC) {
+                    if (c == KeyEvent.KEYCODE_VOLUME_UP || c == KeyEvent.KEYCODE_PAGE_UP) {
+                        tocPrevPage();
+                    } else {
+                        tocNextPage();
+                    }
+                    return true;
+                }
+                if (fullOverlayMode == FullOverlayMode.BOOKMARK) {
+                    if (c == KeyEvent.KEYCODE_VOLUME_UP || c == KeyEvent.KEYCODE_PAGE_UP) {
+                        bookmarkPrevPage();
+                    } else {
+                        bookmarkNextPage();
+                    }
+                    return true;
+                }
+                // 书籍尚未加载时，屏蔽翻页键，防止空指针导致 ANR 崩溃
+                if (!bookLoaded) {
+                    return true;
+                }
                 if (c == KeyEvent.KEYCODE_VOLUME_UP || c == KeyEvent.KEYCODE_PAGE_UP) {
                     if (readerView != null) readerView.prevPage();
                 } else {
                     if (readerView != null) readerView.nextPage();
                 }
             }
-            // ACTION_DOWN 和 ACTION_UP 都消费掉
             return true;
         }
         return super.dispatchKeyEvent(event);
     }
 
-    @Override
-    public boolean onKeyUp(int keyCode, KeyEvent event) {
+    @Override public boolean onKeyUp(int keyCode, KeyEvent event) {
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN
-            || keyCode == KeyEvent.KEYCODE_PAGE_UP || keyCode == KeyEvent.KEYCODE_PAGE_DOWN) return true;
+                || keyCode == KeyEvent.KEYCODE_PAGE_UP   || keyCode == KeyEvent.KEYCODE_PAGE_DOWN)
+            return true;
         return super.onKeyUp(keyCode, event);
     }
 
     private void loadBook() {
+        DebugLog.log("Load", "loadBook start");
+        bookLoaded = false;
+        if (loadingFilename != null) {
+            String name = filePath != null ? filePath : "";
+            int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+            loadingFilename.setText(slash >= 0 ? name.substring(slash + 1) : name);
+        }
+        if (loadingOverlay != null) loadingOverlay.setVisibility(View.VISIBLE);
         filePath = getIntent().getStringExtra("file_path");
         String fileUri = getIntent().getStringExtra("file_uri");
-        DebugLog.log("Sys", "设备=" + android.os.Build.MODEL + " SDK=" + android.os.Build.VERSION.SDK_INT + " 系统=" + android.os.Build.VERSION.RELEASE);
-        DebugLog.log("Sys", "屏幕=" + getResources().getDisplayMetrics().widthPixels + "x" + getResources().getDisplayMetrics().heightPixels + " dens=" + getResources().getDisplayMetrics().density + " dpi=" + getResources().getDisplayMetrics().densityDpi);
-        DebugLog.log("Sys", "APP版本=" + "1.0.7");
-        DebugLog.log("Reader", "loadBook: " + filePath);
         if ((filePath == null || filePath.isEmpty()) && fileUri == null) {
-            Toast.makeText(this, "书籍路径为空", Toast.LENGTH_SHORT).show(); finish(); return;
+            DebugLog.error("Load", "书籍路径为空");
+            Toast.makeText(this, "书籍路径为空", Toast.LENGTH_SHORT).show();
+            finish();
+            return;
         }
         final boolean isUri = (fileUri != null && fileUri.startsWith("content://"));
         if (isUri) filePath = fileUri;
         final String fp = filePath, fu = (fileUri != null) ? fileUri : filePath;
         final boolean isContent = isUri;
 
-        // ★ I-7: 计算文件稳定标识（文件名 + 大小 + 修改时间），防止文件移动后进度丢失
         if (!isContent) {
             File f = new File(fp);
             if (f.exists()) {
@@ -221,98 +596,142 @@ public class ReaderActivity extends Activity {
             fileKey = fu.hashCode() + "";
         }
 
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    final List<Chapter> pc;
-                    String nl = fp != null ? fp.toLowerCase() : "";
-                    boolean isEpub = nl.contains(".epub") || fu.contains(".epub");
-                    boolean isTxt = nl.contains(".txt") || fu.contains(".txt");
+        new Thread(() -> {
+            DebugLog.log("Parse", "开始解析: " + fp + ", isEpub=" + (fp != null && fp.toLowerCase().contains(".epub")) + ", isTxt=" + (fp != null && fp.toLowerCase().contains(".txt")));
+            try {
+                List<Chapter> pc;
+                String nl = fp != null ? fp.toLowerCase() : "";
+                boolean isEpub = nl.contains(".epub") || fu.contains(".epub");
+                boolean isTxt  = nl.contains(".txt")  || fu.contains(".txt");
 
-                    DebugLog.log("Reader", "loadBook: " + (isEpub ? "EPUB" : "TXT") + " path=" + fp + " isUri=" + isUri);
-
-                    if (isEpub) {
-                        if (isContent) {
-                            java.io.InputStream is = getContentResolver().openInputStream(android.net.Uri.parse(fu));
-                            if (is == null) { showToastOnUi("无法读取"); return; }
-                            File tf = new File(getCacheDir(), "t" + System.currentTimeMillis() + ".epub");
-                            java.io.FileOutputStream fos = new java.io.FileOutputStream(tf);
-                            byte[] buf = new byte[8192]; int n;
-                            while ((n = is.read(buf)) != -1) fos.write(buf, 0, n);
-                            fos.close(); is.close();
-                            EpubParser.EpubResult r = EpubParser.parse(tf); pc = r != null ? r.chapters : null;
-                            tf.delete();
-                        } else {
-                            EpubParser.EpubResult r = EpubParser.parse(new File(fp)); pc = r != null ? r.chapters : null;
-                        }
-                    } else if (isTxt) {
-                        if (isContent) {
-                            java.io.InputStream is = getContentResolver().openInputStream(android.net.Uri.parse(fu));
-                            if (is == null) { showToastOnUi("无法读取"); return; }
-                            File tf = new File(getCacheDir(), "t" + System.currentTimeMillis() + ".txt");
-                            java.io.FileOutputStream fos = new java.io.FileOutputStream(tf);
-                            byte[] buf = new byte[8192]; int n;
-                            while ((n = is.read(buf)) != -1) fos.write(buf, 0, n);
-                            fos.close(); is.close();
-                            TxtParser.ParseResult r = TxtParser.parse(tf); pc = r != null ? r.chapters : null;
-                            tf.delete();
-                        } else {
-                            TxtParser.ParseResult r = TxtParser.parse(new File(fp)); pc = r != null ? r.chapters : null;
-                        }
+                if (isEpub) {
+                    if (isContent) {
+                        java.io.InputStream is = getContentResolver().openInputStream(android.net.Uri.parse(fu));
+                        if (is == null) { showToastOnUi("无法读取"); return; }
+                        File tf = new File(getCacheDir(), "t" + System.currentTimeMillis() + ".epub");
+                        java.io.FileOutputStream fos = new java.io.FileOutputStream(tf);
+                        byte[] buf = new byte[8192]; int n;
+                        while ((n = is.read(buf)) != -1) fos.write(buf, 0, n);
+                        fos.close(); is.close();
+                        EpubParser.EpubResult r = (FeatureFlags.useRustEpubParser())
+                                ? NativeBridge.parseEpub(tf)
+                                : EpubParser.parse(tf);
+                        DebugLog.log("Parse", "EPUB解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
+                        pc = r != null ? r.chapters : null;
+                        tf.delete();
                     } else {
-                        uiHandler.post(new Runnable() {
-                            @Override public void run() {
-                                if (isDestroyed) return;
-                                Toast.makeText(ReaderActivity.this, "不支持格式", Toast.LENGTH_SHORT).show();
-                                finish();
-                            }
-                        });
+                        EpubParser.EpubResult r = (FeatureFlags.useRustEpubParser())
+                                ? NativeBridge.parseEpub(new File(fp))
+                                : EpubParser.parse(new File(fp));
+                        DebugLog.log("Parse", "EPUB解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
+                        pc = r != null ? r.chapters : null;
+                    }
+                } else if (isTxt) {
+                    if (isContent) {
+                        java.io.InputStream is = getContentResolver().openInputStream(android.net.Uri.parse(fu));
+                        if (is == null) { showToastOnUi("无法读取"); return; }
+                        File tf = new File(getCacheDir(), "t" + System.currentTimeMillis() + ".txt");
+                        java.io.FileOutputStream fos = new java.io.FileOutputStream(tf);
+                        byte[] buf = new byte[8192]; int n;
+                        while ((n = is.read(buf)) != -1) fos.write(buf, 0, n);
+                        fos.close(); is.close();
+                        TxtParser.ParseResult r = (FeatureFlags.useRustTxtParser())
+                                ? NativeBridge.parseTxt(tf)
+                                : TxtParser.parse(tf);
+                        DebugLog.log("Parse", "TXT解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
+                        pc = r != null ? r.chapters : null;
+                        tf.delete();
+                    } else {
+                        TxtParser.ParseResult r = (FeatureFlags.useRustTxtParser())
+                                ? NativeBridge.parseTxt(new File(fp))
+                                : TxtParser.parse(new File(fp));
+                        DebugLog.log("Parse", "TXT解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
+                        pc = r != null ? r.chapters : null;
+                    }
+                } else {
+                    uiHandler.post(() -> {
+                        if (isDestroyed) return;
+                        Toast.makeText(ReaderActivity.this, "不支持格式", Toast.LENGTH_SHORT).show();
+                        finish();
+                    });
+                    return;
+                }
+
+                final List<Chapter> fch = pc;
+                uiHandler.post(() -> {
+                    if (isDestroyed) return;
+                    if (fch == null || fch.isEmpty()) {
+                        DebugLog.error("Parse", "解析失败: chapters=" + (fch == null ? "null" : "empty"));
+                        Toast.makeText(ReaderActivity.this, "解析失败", Toast.LENGTH_SHORT).show();
+                        finish();
                         return;
                     }
+                    DebugLog.log("Load", "书籍加载成功: chapters=" + fch.size());
+                    chapters = fch;
 
-                    final List<Chapter> fch = pc;
-                    uiHandler.post(new Runnable() {
-                        @Override public void run() {
-                            // ★ I-5: 检查 Activity 是否已销毁
-                            if (isDestroyed) return;
-                            if (fch == null || fch.isEmpty()) { Toast.makeText(ReaderActivity.this, "解析失败", Toast.LENGTH_SHORT).show(); finish(); return; }
-                            chapters = fch;
-                            try {
-                                int sc = prefs.getInt("lc_" + fileKey, 0), sp = prefs.getInt("lp_" + fileKey, 0);
-                                if (TocActivity.sSelectedChapter >= 0 && TocActivity.sSelectedChapter < chapters.size()) {
-                                    // 目录跳转优先
-                                    sc = TocActivity.sSelectedChapter;
-                                    sp = 0;
-                                    TocActivity.sSelectedChapter = -1;
-                                    DebugLog.log("Reader", "tocJumpOK: idx=" + sc);
-                                }
-                                if (sc < 0 || sc >= chapters.size()) { sc = 0; sp = 0; }
-                                currentChapterIndex = sc;
-                                readerView.setChapter(chapters.get(currentChapterIndex));
-                                readerView.applySettings();
-                                if (sp > 0 && sp < readerView.getTotalPages()) readerView.goToPage(sp);
-                            } catch (Exception e) { currentChapterIndex = 0; if (!chapters.isEmpty()) { readerView.setChapter(chapters.get(0)); readerView.applySettings(); } }
-                            updateStatusBar();
-                            DebugLog.log("Reader", "loadOK: ch=" + chapters.size() + " start=" + currentChapterIndex);
+                    persistBookRecord(fp, fu, isContent, fch.size());
+
+                    int sc = 0, sp = 0;
+                    BookStorage storage = EInkReaderApp.getBookStorage();
+                    if (storage != null) {
+                        BookStorage.BookProgress prog = storage.loadProgress(fileKey);
+                        if (prog != null && prog.chapterIndex < fch.size()) {
+                            sc = prog.chapterIndex;
+                            sp = prog.pageIndex;
+                        } else {
+                            sc = prefs.getInt("lc_" + fileKey, 0);
+                            sp = prefs.getInt("lp_" + fileKey, 0);
                         }
-                    });
-                } catch (final Exception e) {
-                    uiHandler.post(new Runnable() {
-                        @Override public void run() {
-                            if (isDestroyed) return;
-                            Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
-                            DebugLog.log("Reader", "ERR: " + e.getMessage());
-                            finish();
-                        }
-                    });
-                }
+                    } else {
+                        sc = prefs.getInt("lc_" + fileKey, 0);
+                        sp = prefs.getInt("lp_" + fileKey, 0);
+                    }
+
+                    if (TocActivity.sSelectedChapter >= 0 && TocActivity.sSelectedChapter < fch.size()) {
+                        sc = TocActivity.sSelectedChapter;
+                        sp = 0;
+                        TocActivity.sSelectedChapter = -1;
+                    }
+                    if (sc < 0 || sc >= fch.size()) { sc = 0; sp = 0; }
+                    currentChapterIndex = sc;
+                    readerView.setChapter(chapters.get(currentChapterIndex));
+                    readerView.applySettings();
+                    if (sp > 0 && sp < readerView.getTotalPages())
+                        readerView.goToPage(sp);
+                    updateStatusBar();
+                    updateProgressBar(readerView.getCurrentPage(), readerView.getTotalPages());
+                    updateProgressLabel();
+                    bookLoaded = true;
+                    if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
+                });
+            } catch (final Exception e) {
+                uiHandler.post(() -> {
+                    if (isDestroyed) return;
+                    Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
+                    finish();
+                });
             }
         }).start();
     }
 
-    private void showToastOnUi(final String m) { uiHandler.post(new Runnable() { @Override public void run() { if (isDestroyed) return; Toast.makeText(ReaderActivity.this, m, Toast.LENGTH_SHORT).show(); finish(); } }); }
+    private void showToastOnUi(final String m) {
+        uiHandler.post(() -> {
+            if (isDestroyed) return;
+            Toast.makeText(ReaderActivity.this, m, Toast.LENGTH_SHORT).show();
+            finish();
+        });
+    }
 
+    private void switchChapterTo(int index) {
+        if (chapters == null || chapters.isEmpty()) return;
+        if (index < 0 || index >= chapters.size()) return;
+        currentChapterIndex = index;
+        readerView.setChapter(chapters.get(currentChapterIndex));
+        readerView.goToPage(0);
+        updateStatusBar();
+        updateProgressBar(0, readerView.getTotalPages());
+        updateProgressLabel();
+    }
 
     private void switchChapter(int d) {
         if (chapters == null || chapters.isEmpty()) return;
@@ -321,58 +740,150 @@ public class ReaderActivity extends Activity {
         currentChapterIndex = ni;
         readerView.setChapter(chapters.get(currentChapterIndex));
         updateStatusBar();
-        DebugLog.log("Reader", "switchChapter: " + d);
     }
 
     private void goToPrevChapter() {
-        if (currentChapterIndex > 0) { switchChapter(-1); readerView.goToPage(readerView.getTotalPages() - 1); }
-        else Toast.makeText(this, "已经是第一章了", Toast.LENGTH_SHORT).show();
+        if (currentChapterIndex > 0) {
+            switchChapter(-1);
+            readerView.goToPage(readerView.getTotalPages() - 1);
+        } else {
+            Toast.makeText(this, "已经是第一章了", Toast.LENGTH_SHORT).show();
+        }
     }
 
     private void goToNextChapter() {
-        if (currentChapterIndex < chapters.size() - 1) switchChapter(1);
-        else Toast.makeText(this, "已经是最后一章了", Toast.LENGTH_SHORT).show();
+        if (currentChapterIndex < chapters.size() - 1) {
+            switchChapter(1);
+            readerView.goToPage(0);
+        } else {
+            Toast.makeText(this, "已经是最后一章了", Toast.LENGTH_SHORT).show();
+        }
     }
 
-    private void toggleMenu(boolean s) { menuVisible = s; topStatusBar.setVisibility(s ? View.VISIBLE : View.GONE); bottomMenu.setVisibility(s ? View.VISIBLE : View.GONE); if (s) updateStatusBar(); }
+    private void toggleMenu(boolean show) {
+        menuVisible = show;
+        int vis = show ? View.VISIBLE : View.GONE;
+        topStatusBar.setVisibility(vis);
+        bottomMenu.setVisibility(vis);
+        if (show) {
+            updateStatusBar();
+            updateProgressLabel();
+            // 调整 ReaderView 以避开状态栏和底部菜单的遮挡
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) readerView.getLayoutParams();
+            if (lp != null) {
+                lp.topMargin = (int) (32 * getResources().getDisplayMetrics().density);
+                lp.bottomMargin = (int) (160 * getResources().getDisplayMetrics().density);
+                readerView.setLayoutParams(lp);
+            }
+        } else {
+            exitFullOverlay();
+            // 恢复 ReaderView 铺满整屏
+            FrameLayout.LayoutParams lp = (FrameLayout.LayoutParams) readerView.getLayoutParams();
+            if (lp != null) {
+                lp.topMargin = 0;
+                lp.bottomMargin = 0;
+                readerView.setLayoutParams(lp);
+            }
+        }
+        applyImmersiveMode();
+    }
+
+    private void applyImmersiveMode() {
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 14) {
+                getWindow().getDecorView().setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                );
+            } else {
+                getWindow().getDecorView().setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_FULLSCREEN
+                                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                );
+            }
+        } catch (Exception ignored) {}
+    }
+
+    private void showLogDialog() {
+        try {
+            String log = DebugLog.getLog();
+            StringBuilder sb = new StringBuilder();
+            sb.append("日志文件路径：\n").append(DebugLog.getLogFilePath()).append("\n\n");
+            if (log != null && log.length() > 0) {
+                // 限制显示长度，避免弹窗过长
+                if (log.length() > 30000) {
+                    sb.append("（日志过长，仅显示最后部分）\n\n");
+                    sb.append(log.substring(log.length() - 30000));
+                } else {
+                    sb.append(log);
+                }
+            } else {
+                sb.append("暂无日志");
+            }
+            new AlertDialog.Builder(this)
+                    .setTitle("调试日志")
+                    .setMessage(sb.toString())
+                    .setPositiveButton("清除", (dlg, w) -> { DebugLog.clear(); Toast.makeText(this, "已清除", Toast.LENGTH_SHORT).show(); })
+                    .setNegativeButton("关闭", null)
+                    .show();
+        } catch (Exception e) {
+            Toast.makeText(this, "无法读取日志", Toast.LENGTH_SHORT).show();
+        }
+    }
 
     private void updateStatusBar() {
-        if (statusTime != null) statusTime.setText(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()));
+        if (statusTime != null)
+            statusTime.setText(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()));
+
         if (statusChapter != null && chapters != null && currentChapterIndex < chapters.size()) {
-            String t = chapters.get(currentChapterIndex).getTitle();
-            String chText = (t != null ? t : "第" + (currentChapterIndex + 1) + "章");
-            // 追加章节进度：第3章/共20章
-            statusChapter.setText(chText + "  (" + (currentChapterIndex + 1) + "/" + chapters.size() + ")");
+            String title = chapters.get(currentChapterIndex).getTitle();
+            String chapText = (title != null) ? title : ("第" + (currentChapterIndex + 1) + "章");
+            statusChapter.setText(chapText + "  (" + (currentChapterIndex + 1) + "/" + chapters.size() + ")");
         }
-        if (statusPage != null && readerView != null) {
-            statusPage.setText(readerView.getCurrentPage() + "/" + readerView.getTotalPages() + "页");
+
+        if (readerView != null) {
+            String pageText = readerView.getCurrentPage() + "/" + readerView.getTotalPages();
+            if (statusChapter != null) {
+                CharSequence existing = statusChapter.getText();
+                if (existing != null && existing.length() > 0) {
+                    statusChapter.setText(existing + "  ·  " + pageText);
+                } else {
+                    statusChapter.setText(pageText);
+                }
+            }
         }
+
         if (statusBattery != null) {
             try {
-                Intent bi = registerReceiver(null, new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
-                if (bi != null) { int l = bi.getIntExtra(BatteryManager.EXTRA_LEVEL, -1), s = bi.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
-                    if (l >= 0 && s > 0) statusBattery.setText((int)((l / (float)s) * 100) + "%"); }
-            } catch (Exception e) { }
+                android.content.Intent bi = registerReceiver(null,
+                        new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+                if (bi != null) {
+                    int level = bi.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+                    int scale = bi.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+                    if (level >= 0 && scale > 0)
+                        statusBattery.setText(String.format(Locale.getDefault(), "%d%%",
+                                (int) ((level / (float) scale) * 100)));
+                }
+            } catch (Exception ignored) {}
         }
     }
 
-    private void adjustFontSize(float d) {
-        float c = Math.max(12f, Math.min(40f, prefs.getFloat("text_size", 26f) + d));
-        prefs.edit().putFloat("text_size", c).apply();
-        readerView.setTextSize(c);
-        DebugLog.log("Reader", "fontSize: " + (int)c);
+    private void updateProgressBar(int currentPage, int totalPages) {
+        if (progressSeekBar == null) return;
+        int progress = 0;
+        if (totalPages > 0) {
+            progress = (int) ((currentPage * 1000f) / (totalPages - 1));
+            if (progress > 1000) progress = 1000;
+        }
+        progressSeekBar.setProgress(progress);
     }
 
-    private void openToc() {
-        if (chapters == null || chapters.isEmpty()) return;
-        ArrayList<String> t = new ArrayList<>();
-        for (Chapter ch : chapters) t.add(ch.getTitle() != null ? ch.getTitle() : "无标题");
-        Intent i = new Intent(this, TocActivity.class);
-        i.putStringArrayListExtra("chapter_titles", t);
-        // ★ 修复：key 名必须与 TocActivity 的 EXTRA_CURRENT_CHAPTER ("current_chapter") 一致
-        i.putExtra("current_chapter", currentChapterIndex);
-        startActivityForResult(i, 1001);
-        DebugLog.log("Reader", "openToc: " + chapters.size() + "ch");
+    private void updateProgressLabel() {
+        if (progressLabel != null && readerView != null) {
+            progressLabel.setText(readerView.getCurrentPage() + " / " + readerView.getTotalPages() + " 页");
+        }
     }
 
     private void saveProgress() {
@@ -380,71 +891,149 @@ public class ReaderActivity extends Activity {
         try {
             int chIdx = currentChapterIndex;
             int pageIdx = readerView.getCurrentPage();
+
             prefs.edit()
-                .putInt("lc_" + fileKey, chIdx)
-                .putInt("lp_" + fileKey, pageIdx)
-                .putInt("total_ch_" + fileKey, chapters.size())
-                .apply();
-            DebugLog.log("Reader", "saveProgress: ch=" + chIdx + "/" + chapters.size() + " page=" + pageIdx);
-        } catch (Exception e) { }
+                    .putInt("lc_" + fileKey, chIdx)
+                    .putInt("lp_" + fileKey, pageIdx)
+                    .putInt("total_ch_" + fileKey, chapters.size())
+                    .apply();
+
+            BookStorage storage = EInkReaderApp.getBookStorage();
+            if (storage != null) {
+                BookStorage.BookProgress prog = new BookStorage.BookProgress();
+                prog.fileKey = fileKey;
+                prog.chapterIndex = chIdx;
+                prog.pageIndex = pageIdx;
+                prog.totalChapters = chapters.size();
+                storage.saveProgress(prog);
+            }
+        } catch (Exception ignored) {}
     }
 
-    @Override
-    protected void onActivityResult(int req, int res, Intent data) {
+    private void persistBookRecord(String fp, String fu, boolean isContent, int totalChapters) {
+        if (fileKey == null) return;
+        try {
+            BookStorage storage = EInkReaderApp.getBookStorage();
+            if (storage == null) return;
+
+            BookStorage.BookRecord rec = new BookStorage.BookRecord();
+            rec.fileKey = fileKey;
+            rec.filePath = (fp != null) ? fp : (fu != null ? fu : "");
+            rec.format = (fp != null && fp.toLowerCase().endsWith(".epub"))
+                    || (fu != null && fu.toLowerCase().endsWith(".epub")) ? "epub" : "txt";
+            rec.totalChapters = totalChapters;
+
+            String name = "";
+            if (!isContent && fp != null) {
+                File f = new File(fp);
+                name = f.getName();
+                rec.fileSize = f.length();
+                rec.lastModified = f.lastModified();
+            } else if (fu != null) {
+                int slash = Math.max(fu.lastIndexOf('/'), fu.lastIndexOf('\\'));
+                name = slash >= 0 ? fu.substring(slash + 1) : fu;
+            }
+            int dot = name.lastIndexOf('.');
+            rec.title = dot > 0 ? name.substring(0, dot) : name;
+
+            BookStorage.BookRecord existing = storage.getBook(fileKey);
+            if (existing != null && existing.addedAt > 0) {
+                rec.addedAt = existing.addedAt;
+            } else {
+                rec.addedAt = System.currentTimeMillis();
+            }
+            if (existing != null) {
+                rec.lastReadTime = existing.lastReadTime;
+                rec.totalReadMs = existing.totalReadMs;
+            }
+
+            storage.upsertBook(rec);
+        } catch (Exception ignored) {}
+    }
+
+    @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);
-        if (req == 2001) { readerView.applySettings(); }
     }
 
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_PAGE_UP) {
-            DebugLog.log("Key", "DOWN:上一页");
-            if (readerView != null) { readerView.prevPage(); }
-            return true;
-        }
-        if (keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_PAGE_DOWN) {
-            DebugLog.log("Key", "DOWN:下一页");
-            if (readerView != null) { readerView.nextPage(); }
-            return true;
-        }
-        return super.onKeyDown(keyCode, event);
-    }
-
-    @Override
-    protected void onResume() {
+    @Override protected void onResume() {
         super.onResume();
-        DebugLog.log("Reader", "onResume sSel=" + TocActivity.sSelectedChapter + " ch=" + (chapters != null ? chapters.size() : 0));
-        // ★ 跳转逻辑移到 loadOK 处（下文的 uiHandler.post 内），等 chapters 加载完再执行
-        readerView.setTextSize(prefs.getFloat("text_size", 26f));
-        readerView.setLineSpacing(prefs.getInt("line_spacing", 15) / 10f);
-        readerView.setParagraphSpacing(prefs.getInt("para_spacing", 18) / 10f);
-        readerView.setHorizontalMargin(prefs.getInt("horizontal_margin", 10));
-        DebugLog.log("Reader", "onResume: ts=" + prefs.getFloat("text_size", 20) + " hm=" + prefs.getInt("horizontal_margin", 10));
-        String fp = prefs.getString("font_path", "");
-        if (!fp.isEmpty()) { File ff = new File(fp); if (ff.exists()) readerView.setCustomTypeface(Typeface.createFromFile(ff)); }
+        if (readerView != null) {
+            // ★ 批量应用所有设置，只触发一次 layoutPages（原先 5+ 次重排→1 次）
+            // 位置恢复由 layoutPages 内部基于文字指纹自动完成
+            readerView.beginBatchUpdate();
+            readerView.setTextSize(prefs.getFloat("text_size", 28f));
+            readerView.setLineSpacing(prefs.getInt("line_spacing", 15) / 10f);
+            readerView.setParagraphSpacing(prefs.getInt("para_spacing", 18) / 10f);
+            readerView.setHorizontalMargin(prefs.getInt("horizontal_margin", 10));
+            readerView.setFirstLineIndent(prefs.getBoolean("first_line_indent", false));
+            String fp = prefs.getString("font_path", "");
+            if (!fp.isEmpty()) {
+                File ff = new File(fp);
+                if (ff.exists())
+                    readerView.setCustomTypeface(Typeface.createFromFile(ff));
+            }
+            readerView.commitBatchUpdate();
+        }
+        boolean night = prefs.getBoolean("night_mode", false);
+        applyNightMode(night);
+
+        // 确保沉浸式全屏不被系统/Activity 恢复覆盖
+        applyImmersiveMode();
     }
 
-    @Override
-    protected void onPause() {
+    @Override protected void onPause() {
+        DebugLog.log("Lifecycle", "onPause");
         super.onPause();
         saveProgress();
-        // 统计阅读时间
         if (readingStartTime > 0 && fileKey != null) {
             long elapsed = System.currentTimeMillis() - readingStartTime;
-            // ★ M-6: 过滤异常短时间（快速后台/前台切换）
             if (elapsed >= 1000) {
                 long total = prefs.getLong("read_time_" + fileKey, 0);
-                prefs.edit().putLong("read_time_" + fileKey, total + elapsed)
-                        .putLong("total_read_time", prefs.getLong("total_read_time", 0) + elapsed).apply();
+                prefs.edit()
+                        .putLong("read_time_" + fileKey, total + elapsed)
+                        .putLong("total_read_time",
+                                prefs.getLong("total_read_time", 0) + elapsed)
+                        .apply();
             }
             readingStartTime = System.currentTimeMillis();
         }
     }
 
-    @Override
-    protected void onDestroy() {
+    @Override public void onBackPressed() {
+        DebugLog.log("Nav", "onBackPressed: fullOverlayMode=" + fullOverlayMode);
+        if (fullOverlayMode != FullOverlayMode.NONE) {
+            exitFullOverlay();
+            return;
+        }
+        super.onBackPressed();
+    }
+
+    @Override protected void onDestroy() {
+        DebugLog.log("Lifecycle", "onDestroy");
         super.onDestroy();
-        // ★ I-5: 标记销毁，后台线程不再更新 UI
         isDestroyed = true;
+    }
+
+    private void applyNightMode(boolean night) {
+        int bg = night ? 0xFF222222 : Color.WHITE;
+        int fg = night ? 0xFFBBBBBB : Color.BLACK;
+
+        View root = findViewById(R.id.root_container);
+        if (root != null) root.setBackgroundColor(bg);
+
+        if (topStatusBar != null) topStatusBar.setBackgroundColor(bg);
+        if (bottomMenu != null) bottomMenu.setBackgroundColor(night ? 0xFF2A2A2A : 0xFFF5F5F5);
+        if (fullOverlay != null) fullOverlay.setBackgroundColor(bg);
+        if (loadingOverlay != null) loadingOverlay.setBackgroundColor(bg);
+
+        for (int id : new int[]{
+                R.id.status_time, R.id.status_chapter, R.id.status_battery,
+                R.id.btn_back, R.id.btn_toc, R.id.btn_bookmark, R.id.btn_settings, R.id.btn_show_log,
+                R.id.btn_font_minus, R.id.btn_font_plus, R.id.btn_bright_minus, R.id.btn_bright_plus, R.id.btn_full_refresh,
+                R.id.progress_label, R.id.full_overlay_title, R.id.full_overlay_back
+        }) {
+            View v = findViewById(id);
+            if (v instanceof TextView) ((TextView) v).setTextColor(fg);
+        }
     }
 }
