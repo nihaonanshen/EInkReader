@@ -49,49 +49,7 @@ cd EInkReader
 
 ---
 
-## 技术栈
 
-| 组件 | 选择 |
-|------|------|
-| 开发工具 | Android Studio + Gradle |
-| 最低 SDK | Android 4.4 (API 19) |
-| 目标 SDK | Android 15 (API 35) |
-| AI Agent | Reasonix |
-| AI 模型 | DeepSeek V4 |
-| 语言 | Java 8 |
-| UI | 纯 Canvas 绘制（无 WebView） |
-
----
-
-## 项目结构
-
-```
-app/src/main/java/com/einkreader/
-├── core/
-│   ├── model/Chapter.java        # 章节数据模型
-│   ├── parser/
-│   │   ├── EpubParser.java       # EPUB 解析器
-│   │   └── TxtParser.java        # TXT 解析器
-│   └── refresh/
-│       └── EinkRefreshManager.java # 墨水屏刷新管理
-├── ui/
-│   ├── library/
-│   │   ├── LibraryActivity.java  # 书库首页
-│   │   └── BookListAdapter.java  # 书籍列表适配器
-│   ├── reader/
-│   │   ├── ReaderActivity.java   # 阅读界面
-│   │   ├── ReaderView.java       # 自定义渲染 View
-│   │   ├── TocActivity.java      # 目录页面
-│   │   ├── ReadingSettingsActivity.java # 阅读设置
-│   │   ├── DebugLog.java         # 调试日志
-│   │   └── DebugLogActivity.java # 日志查看页面
-│   └── settings/
-│       └── AboutActivity.java    # 关于页面
-└── utils/
-    └── EncodingDetector.java     # 文本编码检测
-```
-
----
 
 ## 开发背景
 
@@ -104,38 +62,108 @@ app/src/main/java/com/einkreader/
 4. 发现 Bug 后描述现象，AI 定位并修复  
 5. 功能迭代：从基本阅读到书架管理、搜索、夜间模式等  
 
----
 
-## 最近更新
+# 更新说明 - EInkReader 墨水屏阅读器
 
-**2026-06-29**：相较于最初版本，本次更新进行了以下主要改进：
+## v0.0.2 (2026-07-03)
 
-1. **核心解析器改用 Rust 重写**  
-   - EPUB 与 TXT 解析器已迁移至 Rust（通过 JNI 调用），显著提升解析速度与内存安全。  
-   - 修正了之前 Java 实现导致的编码检测异常、段落解析错误等问题。
+### 本次上传主要内容
 
-2. **默认字号调整**  
-   - 根据用户反馈，将默认字号从 **20sp** 提升至 **26sp**（在 `ReaderView.java`、`ReaderActivity.java` 中统一修改），使得在 Nook 6 Plus 等墨水屏设备上阅读更加舒适。
+本次提交为 v0.0.2 正式版，包含自 v0.0.1 以来的全部代码改进、Bug 修复和架构优化。项目定位为面向墨水屏设备的轻量级本地阅读器，最低支持 Android 4.4 (API 19)，适用于老旧低性能硬件。
 
-3. **目录（TOC）生成增强**  
-   - 改进了智能目录算法，能够更准确地识别中文章节（第X章/回/卷）、英文 Chapter 以及特殊章节标题。  
-   - 修复了因 EPUB 命名空间处理不当导致的目录缺失问题。
+### 新增功能
 
-4. **刷新机制优化**  
-   - 修复了局部刷新残影及定时全局刷新时机的 bug，增加了对不同墨水屏控制器的兼容性，减少了翻页时的鬼影。
+1. **阅读设置页**
+   - 字号、行距、段距独立调节
+   - 首行缩进开关（默认关闭，可在设置中开启）
+   - 夜间模式切换
+   - 水平边距调节
 
-5. **MD5 缓存与文件系统路径修正**  
-   - 重写了进度保存的 MD5 缓存策略，并纠正了 sysfs 路径引用，确保在不同 Android 版本上读写书籍进度更为可靠。
+2. **持久化存储架构**
+   - 新增 `DatabaseHelper` 轻量级 SQLite 辅助类（不依赖 Room，减少 APK 体积）
+   - 新增 `BookStorage` 接口，统一管理书架数据
+   - 阅读进度、书签、最近阅读列表持久化保存
 
-6. **代码结构与注释清理**  
-   - 统一文件编码为 UTF-8，移除了冗余的日志打印。  
-   - 为核心类（`Chapter`、`EpubParser`、`TxtParser`、`EinkRefreshManager`）添加了详细的中文注释，便于后续维护。
+3. **全屏目录与书签**
+   - 目录支持全屏覆盖式显示，动态计算每页条目数适配屏幕
+   - 书签列表全屏显示
+   - 目录点击精确跳转（基于动态行高计算，修复跳转错位）
 
-7. **构建脚本更新**  
-   - 升级 Gradle 包装器至最新版本。  
-   - 修复了在 Windows 上使用 Rust 交叉编译时的链接器冲突（已在 README 技术栈部分说明所需的 Visual Studio Build Tools）。
+4. **双行底部菜单**
+   - 第一行：目录、书签、进度、设置
+   - 第二行：字号减、字号加、亮度、全刷
+   - 常用功能一键直达，适合墨水屏操作
 
----
+5. **全屏加载遮罩**
+   - 打开书籍时显示大字号加载提示，避免白屏等待
+
+6. **调试日志系统**
+   - `DebugLog` 记录生命周期、解析、排版、绘制、翻页、章节切换等事件
+   - 支持界面查看和文件导出（`/sdcard/Download/EInkReader_debug.txt`）
+   - 便于问题定位，正式发布前可移除
+
+7. **Release 正式签名**
+   - 配置 RSA 2048 签名 keystore
+   - 开启 ProGuard 代码混淆与资源优化
+
+### 修复的问题
+
+#### 文字排版
+- **大面积吞字**：改用 `Paint.measureText()` (float 精度) 替代 `getTextBounds()` (int 取整误差)，并增加 3.0px 安全余量
+- **个别行吞半个字**：CJK 模式改为"逐字添加 + 每次整行测量校验"，消除标点符号 kerning 导致的累积宽度偏差
+- **以双引号开头的行不换行**：语言判定逻辑从 `c > ' '` 改为 `Character.isLetterOrDigit(c)`，跳过引号等标点，避免中文对话被误判为英文模式
+- **英文超长词不换行**：超长 word 无论是否在行首都逐字符截断
+- **右侧文字被裁切**：paddingRight 增加 4dp 安全余量（右侧 14dp，左侧 10dp）
+
+#### 目录与导航
+- **目录点击跳转错位**（点12章跳到15章）：修复 dp/px 换算错误（16px→16dp）+ 动态计算行高
+- **目录不铺满屏幕**：基于屏幕高度动态计算每页条目数（5~30 之间）
+- **目录返回键退出应用**：拦截返回键关闭目录覆盖层而非退出
+- **状态栏不隐藏**：使用 `SYSTEM_UI_FLAG_FULLSCREEN | HIDE_NAVIGATION | IMMERSIVE_STICKY` 组合
+
+#### 解析器
+- **EPUB 全角空格 (U+3000) 导致严重偏右**：清理段落首尾全角空格
+- **TxtParser 缓存换行符损坏**：转义/反转义标题中的特殊字符
+- **EpubParser 缓存丢失段落样式**：序列化 paragraphTypes 字段保留 H1/H2/Blockquote 样式
+- **TxtParser 单章节过大 OOM**：限制单章 500KB
+- **TxtParser 章节误判**：使用 `.matches()` 替代 `.find()`，增加严格模式和密度检查
+- **编码误识别**：非中文编码 ASCII 占比 <90% 时拒绝
+
+#### 性能与稳定性
+- **设置返回后重复分页**：新增 `beginBatchUpdate()`/`commitBatchUpdate()` 批量更新机制，5-7 次 layoutPages 降至 1 次
+- **调节字号后阅读位置丢失**：分页前后保存/恢复首行文字指纹
+- **NativeBridge 字符串拼接 O(n²)**：改用 StringBuilder
+- **ConcurrentHashMap 内存泄漏**：修复 sParseLocks 无清理逻辑
+- **EinkRefreshManager 回调失效**：异步回调改为非同步调用
+
+### 已知限制
+
+1. **DebugLog 代码**：调试日志系统属于开发阶段代码，正式发布前需移除以减小体积
+2. **Rust 解析器集成**：`FeatureFlags` 已提供 `useRustTxtParser()`/`useRustEpubParser()` 开关，但 Rust 实现的 NCX 解析等部分功能未完整集成
+3. **首行缩进**：默认关闭，需用户在设置中手动开启
+4. **字体支持**：当前仅使用系统默认字体，未集成自定义字体文件
+5. **云同步**：因目标设备为老旧低性能硬件，明确排除云同步功能
+
+### 后续计划
+
+1. **正式发布前**：移除 DebugLog 相关代码，进一步减小 APK 体积
+2. **Rust 解析器**：完善 FeatureFlags 集成，启用 Rust EPUB/TXT 解析以提升性能
+3. **TTS 朗读**：评估在低性能设备上集成文本朗读的可行性
+4. **字体定制**：支持加载外部字体文件（ttf/otf）
+5. **翻页动画**：针对墨水屏优化的无闪烁翻页效果
+
+### 技术规格
+
+| 项目 | 值 |
+|------|-----|
+| 最低支持 | Android 4.4 (API 19) |
+| 目标 SDK | 28 |
+| 架构 | Java + Rust (JNI via NativeBridge) |
+| 依赖策略 | 最小化依赖，不使用 Room/RxJava 等重型库 |
+| 构建工具 | Gradle 8.x + Android Gradle Plugin |
+| 签名 | RSA 2048，有效期 10000 天 |
+| APK 大小 | Release 约 2.9 MB |
+
 
 ## License
 
