@@ -42,6 +42,7 @@ public class LibraryActivity extends Activity {
     private TextView btnSort;
     private BookListAdapter adapter;
     private List<BookInfo> books = new ArrayList<BookInfo>();
+    private boolean scanning = false;
     private int currentSortMode = 0; // 0=按时间 1=按名称 2=按格式
 
     // 支持的文件扩展名
@@ -157,96 +158,114 @@ public class LibraryActivity extends Activity {
      * 1. 先从数据库读取已知书籍（包含阅读进度元信息）
      * 2. 再扫描文件系统，把新增书籍合并进来（用 fileKey 去重）
      * 3. 对扫描路径失效（文件已被删除）的数据库记录进行清理
+     * 4. try/finally 确保 scanning 锁总能释放，防异常永久锁死
      */
     private void scanBooks() {
-        books.clear();
+        if (scanning) return;
+        scanning = true;
+        try {
+            books.clear();
 
-        // 从数据库加载已知书籍
-        BookStorage storage = EInkReaderApp.getBookStorage();
-        java.util.HashMap<String, BookInfo> dbMap = new java.util.HashMap<String, BookInfo>();
-        if (storage != null) {
-            List<BookStorage.BookRecord> dbBooks = storage.listAllBooks();
-            for (BookStorage.BookRecord rec : dbBooks) {
-                File f = new File(rec.filePath);
-                if (!f.exists()) {
-                    // 文件已被删除，清理数据库记录
-                    storage.deleteBook(rec.fileKey);
-                    DebugLog.log("Lib", "清理失效记录: " + rec.filePath);
-                    continue;
+            // 从数据库加载已知书籍
+            BookStorage storage = EInkReaderApp.getBookStorage();
+            java.util.HashMap<String, BookInfo> dbMap = new java.util.HashMap<String, BookInfo>();
+            if (storage != null) {
+                List<BookStorage.BookRecord> dbBooks = storage.listAllBooks();
+                for (BookStorage.BookRecord rec : dbBooks) {
+                    File f = new File(rec.filePath);
+                    if (!f.exists()) {
+                        // 文件已被删除，清理数据库记录
+                        storage.deleteBook(rec.fileKey);
+                        DebugLog.log("Lib", "清理失效记录: " + rec.filePath);
+                        continue;
+                    }
+                    BookInfo info = new BookInfo(f);
+                    info.dbRecord = rec;
+                    dbMap.put(rec.fileKey, info);
                 }
-                BookInfo info = new BookInfo(f);
-                info.dbRecord = rec;
-                dbMap.put(rec.fileKey, info);
             }
-        }
 
-        // 从设置读取上次的书籍目录，没有则用默认目录
-        SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
-        String savedPath = prefs.getString(PREFS_LIBRARY_PATH, "");
+            // 从设置读取上次的书籍目录，没有则用默认目录
+            SharedPreferences prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE);
+            String savedPath = prefs.getString(PREFS_LIBRARY_PATH, "");
 
-        List<File> searchDirs = new ArrayList<File>();
-        if (!savedPath.isEmpty()) {
-            File savedDir = new File(savedPath);
-            if (savedDir.exists() && savedDir.isDirectory()) {
-                searchDirs.add(savedDir);
+            List<File> searchDirs = new ArrayList<File>();
+            if (!savedPath.isEmpty()) {
+                File savedDir = new File(savedPath);
+                if (savedDir.exists() && savedDir.isDirectory()) {
+                    searchDirs.add(savedDir);
+                }
             }
-        }
 
-        // 总是扫描 /sdcard 下的常见阅读目录
-        File sdcard = Environment.getExternalStorageDirectory();
-        searchDirs.add(sdcard);
-        searchDirs.add(new File(sdcard, "Books"));
-        searchDirs.add(new File(sdcard, "books"));
-        searchDirs.add(new File(sdcard, "eBooks"));
-        searchDirs.add(new File(sdcard, "EInkReader"));
-        searchDirs.add(new File(sdcard, "Download"));
+            // 总是扫描 /sdcard 下的常见阅读目录
+            File sdcard = Environment.getExternalStorageDirectory();
+            searchDirs.add(sdcard);
+            searchDirs.add(new File(sdcard, "Books"));
+            searchDirs.add(new File(sdcard, "books"));
+            searchDirs.add(new File(sdcard, "eBooks"));
+            searchDirs.add(new File(sdcard, "EInkReader"));
+            searchDirs.add(new File(sdcard, "Download"));
 
-        java.util.HashSet<String> seenPaths = new java.util.HashSet<String>();
-        for (File dir : searchDirs) {
-            if (dir.exists() && dir.isDirectory()) {
-                scanDir(dir, seenPaths, dbMap);
+            // 扫描外置 SD 卡常见路径（Android 4.4+ 外置卡通常挂载在 /storage/ 下）
+            searchDirs.add(new File("/storage/emulated/0/books"));
+            searchDirs.add(new File("/storage/emulated/0/Books"));
+            searchDirs.add(new File("/storage/emulated/0/epub"));
+            searchDirs.add(new File("/storage/emulated/0/EInkReader"));
+            searchDirs.add(new File("/mnt/sdcard/epub"));
+            searchDirs.add(new File("/mnt/external_sd/epub"));
+            searchDirs.add(new File("/mnt/external_sd/books"));
+            searchDirs.add(new File("/mnt/external_sd/Books"));
+
+            java.util.HashSet<String> seenPaths = new java.util.HashSet<String>();
+            for (File dir : searchDirs) {
+                if (dir.exists() && dir.isDirectory()) {
+                    scanDir(dir, seenPaths, dbMap);
+                }
             }
+
+            books.addAll(dbMap.values());
+
+            // 按当前排序模式排序
+            if (currentSortMode == 1) {
+                java.util.Collections.sort(books, new Comparator<BookInfo>() {
+                    @Override public int compare(BookInfo a, BookInfo b) {
+                        return a.title.compareToIgnoreCase(b.title);
+                    }
+                });
+            } else if (currentSortMode == 2) {
+                java.util.Collections.sort(books, new Comparator<BookInfo>() {
+                    @Override public int compare(BookInfo a, BookInfo b) {
+                        String extA = a.file.getName().toLowerCase();
+                        String extB = b.file.getName().toLowerCase();
+                        int cmp = extA.compareTo(extB);
+                        if (cmp != 0) return cmp;
+                        return a.title.compareToIgnoreCase(b.title);
+                    }
+                });
+            } else {
+                // 按时间：最近阅读的在前
+                java.util.Collections.sort(books, new Comparator<BookInfo>() {
+                    @Override public int compare(BookInfo a, BookInfo b) {
+                        long ta = a.dbRecord != null ? a.dbRecord.lastReadTime : a.file.lastModified();
+                        long tb = b.dbRecord != null ? b.dbRecord.lastReadTime : b.file.lastModified();
+                        return Long.compare(tb, ta);
+                    }
+                });
+            }
+
+            DebugLog.log("Lib", "扫描完成: " + books.size() + "本书 排序模式=" + currentSortMode);
+        } finally {
+            adapter.notifyDataSetChanged();
+            scanning = false;
         }
-
-        books.addAll(dbMap.values());
-
-        // 按当前排序模式排序
-        if (currentSortMode == 1) {
-            java.util.Collections.sort(books, new Comparator<BookInfo>() {
-                @Override public int compare(BookInfo a, BookInfo b) {
-                    return a.title.compareToIgnoreCase(b.title);
-                }
-            });
-        } else if (currentSortMode == 2) {
-            java.util.Collections.sort(books, new Comparator<BookInfo>() {
-                @Override public int compare(BookInfo a, BookInfo b) {
-                    String extA = a.file.getName().toLowerCase();
-                    String extB = b.file.getName().toLowerCase();
-                    int cmp = extA.compareTo(extB);
-                    if (cmp != 0) return cmp;
-                    return a.title.compareToIgnoreCase(b.title);
-                }
-            });
-        } else {
-            // 按时间：最近阅读的在前
-            java.util.Collections.sort(books, new Comparator<BookInfo>() {
-                @Override public int compare(BookInfo a, BookInfo b) {
-                    long ta = a.dbRecord != null ? a.dbRecord.lastReadTime : a.file.lastModified();
-                    long tb = b.dbRecord != null ? b.dbRecord.lastReadTime : b.file.lastModified();
-                    return Long.compare(tb, ta);
-                }
-            });
-        }
-
-        DebugLog.log("Lib", "扫描完成: " + books.size() + "本书 排序模式=" + currentSortMode);
-        adapter.notifyDataSetChanged();
     }
 
     /**
-     * 扫描单个目录下的书籍，结果合并到 dbMap（已存在的不覆盖）
+     * 扫描单个目录下的书籍（递归扫描子目录），结果合并到 dbMap（已存在的不覆盖）
      */
     private void scanDir(File dir, java.util.HashSet<String> seenPaths,
                          java.util.HashMap<String, BookInfo> dbMap) {
+        // 第一步：扫描当前目录下的所有书籍文件
         File[] files = dir.listFiles(new FileFilter() {
             @Override
             public boolean accept(File file) {
@@ -259,22 +278,39 @@ public class LibraryActivity extends Activity {
             }
         });
 
-        if (files == null) return;
+        if (files != null) {
+            Arrays.sort(files, new Comparator<File>() {
+                @Override
+                public int compare(File a, File b) {
+                    return Long.compare(b.lastModified(), a.lastModified());
+                }
+            });
 
-        Arrays.sort(files, new Comparator<File>() {
+            for (File file : files) {
+                String absPath = file.getAbsolutePath();
+                if (!seenPaths.contains(absPath)) {
+                    seenPaths.add(absPath);
+                    BookInfo info = new BookInfo(file);
+                    if (!dbMap.containsKey(info.fileKey)) {
+                        dbMap.put(info.fileKey, info);
+                    }
+                }
+            }
+        }
+
+        // 第二步：递归扫描子目录（支持 epub/txt 放在多级目录下）
+        File[] subDirs = dir.listFiles(new FileFilter() {
             @Override
-            public int compare(File a, File b) {
-                return Long.compare(b.lastModified(), a.lastModified());
+            public boolean accept(File f) {
+                return f.isDirectory();
             }
         });
-
-        for (File file : files) {
-            String absPath = file.getAbsolutePath();
-            if (!seenPaths.contains(absPath)) {
-                seenPaths.add(absPath);
-                BookInfo info = new BookInfo(file);
-                if (!dbMap.containsKey(info.fileKey)) {
-                    dbMap.put(info.fileKey, info);
+        if (subDirs != null) {
+            for (File subDir : subDirs) {
+                String dirPath = subDir.getAbsolutePath();
+                if (!seenPaths.contains(dirPath)) {
+                    seenPaths.add(dirPath);
+                    scanDir(subDir, seenPaths, dbMap);
                 }
             }
         }
@@ -419,5 +455,3 @@ public class LibraryActivity extends Activity {
         }
     }
 }
-
-

@@ -37,8 +37,10 @@ import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 
 public class ReaderActivity extends Activity {
@@ -50,6 +52,8 @@ public class ReaderActivity extends Activity {
     private View bottomMenu;
     private View fullOverlay;
     private View loadingOverlay;
+    // EPUB 图片数据
+    private Map<String, byte[]> epubImageBytes;
     // 翻页模式的目录/书签
     private TextView fullTocText;
     private TextView fullTocPage;
@@ -63,6 +67,8 @@ public class ReaderActivity extends Activity {
     private int tocPageSize = 15;  // 每页显示条目数（动态计算）
     private int tocItemHeightPx = 72;  // 每个条目的高度（像素，动态计算）
     private int tocCurrentPage = 0;
+    private float tocTextSizeSp = 18f;  // 目录文字大小（SP）
+    private boolean tocLayoutValid = false;  // ★ TOC 布局缓存标记
     private java.util.List<String> bookmarkItems = new java.util.ArrayList<>();
     private int bookmarkCurrentPage = 0;
 
@@ -377,6 +383,8 @@ public class ReaderActivity extends Activity {
      * 根据屏幕高度、字号、行距自动计算，适配不同尺寸的墨水屏
      */
     private void calculateTocLayout() {
+        // ★ 缓存命中则跳过重算（屏幕尺寸在 Activity 生命周期内不变）
+        if (tocLayoutValid) return;
         android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
         float density = dm.density;
         int screenHeight = dm.heightPixels;
@@ -390,8 +398,14 @@ public class ReaderActivity extends Activity {
         int textAvailHeight = availHeight - padding;
         if (textAvailHeight < 200) textAvailHeight = 200; // 安全下限
 
-        // 目录文字大小: 18sp
-        float tocTextSizeSp = 18f;
+        // 目录文字大小: 根据屏幕密度和高度动态计算
+        if (screenHeight >= 1800) {
+            tocTextSizeSp = 26f;   // 7.8 寸大屏
+        } else if (screenHeight >= 1400) {
+            tocTextSizeSp = 22f;   // 6 寸中屏
+        } else {
+            tocTextSizeSp = 18f;   // 小屏
+        }
         float tocTextSizePx = tocTextSizeSp * density;
         // 行距额外: 8dp
         float lineSpacingExtraPx = 8 * density;
@@ -411,10 +425,13 @@ public class ReaderActivity extends Activity {
         DebugLog.log("TOC", "calculateTocLayout: screenH=" + screenHeight + " density=" + density
                 + " headerH=" + headerHeight + " availH=" + availHeight + " textAvailH=" + textAvailHeight
                 + " lineH=" + lineHeightPx + " itemH=" + tocItemHeightPx + " pageSize=" + tocPageSize);
+        tocLayoutValid = true;
     }
 
     private void renderTocPage() {
         if (fullTocText == null || fullTocPage == null) return;
+        // 应用目录字体大小
+        fullTocText.setTextSize(tocTextSizeSp);
         int totalPages = (tocItems.size() + tocPageSize - 1) / tocPageSize;
         if (tocCurrentPage >= totalPages) tocCurrentPage = totalPages - 1;
         if (tocCurrentPage < 0) tocCurrentPage = 0;
@@ -564,9 +581,10 @@ public class ReaderActivity extends Activity {
     }
 
     private void loadBook() {
-        DebugLog.log("Load", "loadBook start");
-        bookLoaded = false;
-        if (loadingFilename != null) {
+            DebugLog.log("Load", "loadBook start");
+            bookLoaded = false;
+            epubImageBytes = null; // ★ 重置图片数据，防止跨书泄露
+            if (loadingFilename != null) {
             String name = filePath != null ? filePath : "";
             int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
             loadingFilename.setText(slash >= 0 ? name.substring(slash + 1) : name);
@@ -618,15 +636,21 @@ public class ReaderActivity extends Activity {
                                 : EpubParser.parse(tf);
                         DebugLog.log("Parse", "EPUB解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
                         pc = r != null ? r.chapters : null;
+                        if (r != null) {
+                            epubImageBytes = r.images;
+                        }
                         tf.delete();
                     } else {
-                        EpubParser.EpubResult r = (FeatureFlags.useRustEpubParser())
-                                ? NativeBridge.parseEpub(new File(fp))
-                                : EpubParser.parse(new File(fp));
-                        DebugLog.log("Parse", "EPUB解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
-                        pc = r != null ? r.chapters : null;
-                    }
-                } else if (isTxt) {
+                                        EpubParser.EpubResult r = (FeatureFlags.useRustEpubParser())
+                                                ? NativeBridge.parseEpub(new File(fp))
+                                                : EpubParser.parse(new File(fp));
+                                        DebugLog.log("Parse", "EPUB解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
+                                        pc = r != null ? r.chapters : null;
+                                        if (r != null) {
+                                            epubImageBytes = r.images;
+                                        }
+                                    }
+                                } else if (isTxt) {
                     if (isContent) {
                         java.io.InputStream is = getContentResolver().openInputStream(android.net.Uri.parse(fu));
                         if (is == null) { showToastOnUi("无法读取"); return; }
@@ -695,6 +719,10 @@ public class ReaderActivity extends Activity {
                     if (sc < 0 || sc >= fch.size()) { sc = 0; sp = 0; }
                     currentChapterIndex = sc;
                     readerView.setChapter(chapters.get(currentChapterIndex));
+                    // ★ 传递图片字节数据给 ReaderView，用于 [[IMAGE:path]] 渲染
+                    if (epubImageBytes != null) {
+                        readerView.setChapterImages(epubImageBytes);
+                    }
                     readerView.applySettings();
                     if (sp > 0 && sp < readerView.getTotalPages())
                         readerView.goToPage(sp);
@@ -1005,6 +1033,8 @@ public class ReaderActivity extends Activity {
             exitFullOverlay();
             return;
         }
+        // ★ 中断后台布局，避免布局结果回调已销毁的 Activity
+        if (readerView != null) readerView.cancelLayout();
         super.onBackPressed();
     }
 

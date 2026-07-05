@@ -4,8 +4,8 @@ package com.einkreader.core;
  * 全局常量定义
  */
 public class Constants {
-    /** 默认字体大小（SP 单位） */
-    public static final int DEFAULT_FONT_SIZE_SP = 26;
+    /** 默认字体大小（SP 单位），适配 7.8 寸 300 PPI 墨水屏 */
+    public static final int DEFAULT_FONT_SIZE_SP = 30;
     
     /** 章节标题行首最小匹配字符数 */
     public static final int MIN_CHAPTER_TITLE_PREFIX_CHARS = 5;

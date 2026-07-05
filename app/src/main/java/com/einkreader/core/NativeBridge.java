@@ -14,6 +14,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 
+import android.util.Base64;
+
 /**
  * Rust 原生库 JNI 桥接层
  *
@@ -214,7 +216,7 @@ public class NativeBridge {
                     java.util.Iterator<String> keys = imagesObj.keys();
                     while (keys.hasNext()) {
                         String key = keys.next();
-                        result.images.put(key, imagesObj.getString(key));
+                        result.images.put(key, Base64.decode(imagesObj.getString(key), Base64.DEFAULT));
                     }
                 }
 

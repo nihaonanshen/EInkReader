@@ -9,6 +9,7 @@ import org.xmlpull.v1.XmlPullParserFactory;
 
 import java.io.BufferedReader;
 import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -18,8 +19,10 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
@@ -85,21 +88,21 @@ public class EpubParser {
 
     // 解析结果
     public static class EpubResult {
-        public String title;
-        public String author;
-        public String encoding = "UTF-8";
-        public List<Chapter> chapters;
-        public List<String> spineOrder;
-        String ncxHref;
-        String navXhtmlHref;  // EPUB3 nav.xhtml 路径（兜底目录来源）
-        public Map<String, String> images;  // 图片数据：path -> base64 encoded bytes
+            public String title;
+            public String author;
+            public String encoding = "UTF-8";
+            public List<Chapter> chapters;
+            public List<String> spineOrder;
+            String ncxHref;
+            String navXhtmlHref;  // EPUB3 nav.xhtml 路径（兜底目录来源）
+            public Map<String, byte[]> images;  // 图片数据：path -> raw bytes
 
-        public EpubResult() {
-            chapters = new ArrayList<Chapter>();
-            spineOrder = new ArrayList<String>();
-            images = new HashMap<String, String>();
+            public EpubResult() {
+                chapters = new ArrayList<Chapter>();
+                spineOrder = new ArrayList<String>();
+                images = new HashMap<String, byte[]>();
+            }
         }
-    }
 
     // 缓存目录
     private static File sCacheBaseDir = null;
@@ -147,8 +150,16 @@ public class EpubParser {
         try {
             zipFile = new ZipFile(file);
 
+            // ★ 构建 ZIP 项小写名称映射表（所有依路径查找都用这个，避免 O(N) 遍历）
+            Map<String, ZipEntry> lcEntryMap = new HashMap<String, ZipEntry>();
+            java.util.Enumeration<? extends ZipEntry> allEntries = zipFile.entries();
+            while (allEntries.hasMoreElements()) {
+                ZipEntry ze = allEntries.nextElement();
+                lcEntryMap.put(ze.getName().toLowerCase(), ze);
+            }
+
             // 1. 读取 container.xml → 找到 OPF 路径
-            String opfPath = parseContainer(zipFile);
+            String opfPath = parseContainer(zipFile, lcEntryMap);
             if (opfPath == null) {
                 Log.e(TAG, "找不到 container.xml");
                 return result;
@@ -159,10 +170,10 @@ public class EpubParser {
             parseOpf(zipFile, opfPath, opfDir, result);
 
             // 3. 解析 NCX → 获取章节标题映射
-            Map<String, String> ncxTitles = parseNcx(zipFile, opfDir, result);
+            Map<String, String> ncxTitles = parseNcx(zipFile, opfDir, result, lcEntryMap);
 
-            // 4. 按 spine 顺序读取内容并提取图片
-            parseSpineContent(zipFile, opfDir, result, ncxTitles);
+            // 4. 按 spine 顺序读取内容并提取图片（传入映射表避免遍历）
+            parseSpineContent(zipFile, opfDir, result, ncxTitles, lcEntryMap);
 
             // 5. 书名后备
             if (result.title == null || result.title.isEmpty()) {
@@ -172,9 +183,12 @@ public class EpubParser {
                 }
             }
 
-            Log.i(TAG, "解析完成: " + result.title + ", " + result.chapters.size() + "章");
-            com.einkreader.ui.reader.DebugLog.log("Epub", "解析完成: " + result.title + " " + result.chapters.size() + "章 作者=" + result.author);
-        } finally {
+            // 6. 从 ZIP 提取所有图片字节到 result.images
+                        extractAllImageBytes(zipFile, result);
+
+                        Log.i(TAG, "解析完成: " + result.title + ", " + result.chapters.size() + "章, 图片=" + (result.images != null ? result.images.size() : 0));
+                        com.einkreader.ui.reader.DebugLog.log("Epub", "解析完成: " + result.title + " " + result.chapters.size() + "章 作者=" + result.author + " 图片=" + (result.images != null ? result.images.size() : 0));
+                    } finally {
             if (zipFile != null) try { zipFile.close(); } catch (IOException e) { }
         }
         return result;
@@ -182,8 +196,8 @@ public class EpubParser {
 
     // ==================== Container / OPF / NCX 解析 ====================
 
-    private static String parseContainer(ZipFile zipFile) throws IOException {
-        ZipEntry entry = zipFile.getEntry("META-INF/container.xml");
+    private static String parseContainer(ZipFile zipFile, Map<String, ZipEntry> lcEntryMap) throws IOException {
+        ZipEntry entry = lcEntryMap.get("meta-inf/container.xml");
         if (entry == null) return null;
         InputStream is = null;
         try {
@@ -296,10 +310,10 @@ public class EpubParser {
         }
     }
 
-    private static Map<String, String> parseNcx(ZipFile zipFile, String opfDir, EpubResult result) {
+    private static Map<String, String> parseNcx(ZipFile zipFile, String opfDir, EpubResult result, Map<String, ZipEntry> lcEntryMap) {
         Map<String, String> ncxTitles = new HashMap<String, String>();
 
-        // 找 NCX 文件：先看 manifest 声明（已用 opfDir 拼接路径），没有则全 ZIP 扫描
+        // 找 NCX 文件：先看 manifest 声明（已用 opfDir 拼接路径），没有则查映射表
         String ncxHref = result.ncxHref;
         String ncxPath = null;
         if (ncxHref != null && !ncxHref.isEmpty()
@@ -307,12 +321,10 @@ public class EpubParser {
             ncxPath = ncxHref.startsWith(opfDir) ? ncxHref : opfDir + ncxHref;
         }
         if (ncxPath == null) {
-            java.util.Enumeration<? extends ZipEntry> entries = zipFile.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry ze = entries.nextElement();
-                String name = ze.getName();
-                if (name.toLowerCase().endsWith(".ncx")) {
-                    ncxPath = name;
+            // ★ 使用映射表快速查找 .ncx 文件
+            for (Map.Entry<String, ZipEntry> e : lcEntryMap.entrySet()) {
+                if (e.getKey().endsWith(".ncx")) {
+                    ncxPath = e.getValue().getName();
                     break;
                 }
             }
@@ -333,10 +345,10 @@ public class EpubParser {
                 }
             }
             if (navHref != null) {
-                parseEpub3NavFallback(zipFile, navHref, ncxTitles);
+                parseEpub3NavFallback(zipFile, navHref, ncxTitles, lcEntryMap);
             } else {
                 // 最后兜底：扫描 ZIP 找任意可能的 nav/toc xhtml
-                parseEpub3NavFallback(zipFile, null, ncxTitles);
+                parseEpub3NavFallback(zipFile, null, ncxTitles, lcEntryMap);
             }
         }
 
@@ -457,20 +469,19 @@ public class EpubParser {
      * @param navHref 若为 null，则扫描 ZIP 找任意可能的 nav/toc xhtml
      */
     private static void parseEpub3NavFallback(ZipFile zipFile, String navHref,
-                                              Map<String, String> ncxTitles) {
+                                              Map<String, String> ncxTitles,
+                                              Map<String, ZipEntry> lcEntryMap) {
         ZipEntry navEntry = null;
         if (navHref != null) {
-            navEntry = zipFile.getEntry(navHref);
+            navEntry = lcEntryMap.get(navHref.toLowerCase());
         }
         if (navEntry == null) {
-            java.util.Enumeration<? extends ZipEntry> entries = zipFile.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry ze = entries.nextElement();
-                String name = ze.getName();
-                String low = name.toLowerCase();
-                if ((low.endsWith(".xhtml") || low.endsWith(".html"))
-                        && (low.contains("nav") || low.contains("toc"))) {
-                    navEntry = ze;
+            // ★ 使用映射表快速查找 nav/toc xhtml
+            for (Map.Entry<String, ZipEntry> e : lcEntryMap.entrySet()) {
+                String key = e.getKey();
+                if ((key.endsWith(".xhtml") || key.endsWith(".html"))
+                        && (key.contains("nav") || key.contains("toc"))) {
+                    navEntry = e.getValue();
                     break;
                 }
             }
@@ -578,29 +589,29 @@ public class EpubParser {
     // ==================== 内容解析（含图片提取） ====================
 
     private static void parseSpineContent(ZipFile zipFile, String opfDir,
-                                          EpubResult result, Map<String, String> ncxTitles) throws IOException {
+                                          EpubResult result, Map<String, String> ncxTitles,
+                                          Map<String, ZipEntry> lcEntryMap) throws IOException {
         // ★ 使用独立计数器保证章节 index 连续
         int chapterIndex = 0;
         for (int i = 0; i < result.spineOrder.size(); i++) {
             String href = result.spineOrder.get(i);
             String entryPath = opfDir + href;
 
-            // ★ spine 路径多种尝试
+            // ★ spine 路径多种尝试（全部使用 lcEntryMap 的 O(1) 小写查找）
             ZipEntry entry = null;
-            // 1. 原样
-            entry = zipFile.getEntry(entryPath);
+            // 1. 原样（小写映射表）
+            entry = lcEntryMap.get(entryPath.toLowerCase());
             // 2. URL 解码
             if (entry == null) {
-                try { entry = zipFile.getEntry(java.net.URLDecoder.decode(entryPath, "UTF-8")); } catch (Exception e) { }
+                try { entry = lcEntryMap.get(java.net.URLDecoder.decode(entryPath, "UTF-8").toLowerCase()); } catch (Exception e) { }
             }
             // 3. 去掉 ./
             if (entry == null && entryPath.startsWith("./")) {
-                entry = zipFile.getEntry(entryPath.substring(2));
+                entry = lcEntryMap.get(entryPath.substring(2).toLowerCase());
             }
             // 4. 路径规范化 + 安全检查（防止 ZIP Slip）
             if (entry == null) {
                 try {
-                    // ★ M-7: ZIP 内部路径始终使用 '/'；手动规范化移除 .. 和 .
                     String[] parts = (opfDir + "/" + href).split("/");
                     java.util.ArrayList<String> stack = new java.util.ArrayList<String>();
                     for (String p : parts) {
@@ -617,26 +628,23 @@ public class EpubParser {
                         norm.append(stack.get(si));
                     }
                     String normalizedPath = norm.toString();
-                    // 安全检查：不能跳出 opfDir
                     if (normalizedPath.startsWith(opfDir)) {
-                        entry = zipFile.getEntry(normalizedPath);
+                        entry = lcEntryMap.get(normalizedPath.toLowerCase());
                     }
                 } catch (Exception e) { }
             }
-            // 5. 不区分大小写（遍历 ZIP 找匹配的文件名）
+            // 5. ★ 不区分大小写（利用映射表已小写化的键，尝试文件名匹配）
             if (entry == null) {
                 String targetName = href;
                 int ls = targetName.lastIndexOf('/');
                 if (ls >= 0) targetName = targetName.substring(ls + 1);
                 String targetLower = targetName.toLowerCase();
-                java.util.Enumeration<? extends ZipEntry> allEntries = zipFile.entries();
-                while (allEntries.hasMoreElements()) {
-                    ZipEntry ze = allEntries.nextElement();
-                    String zeName = ze.getName();
+                for (Map.Entry<String, ZipEntry> e : lcEntryMap.entrySet()) {
+                    String zeName = e.getValue().getName();
                     int zs = zeName.lastIndexOf('/');
                     String zeFile = (zs >= 0) ? zeName.substring(zs + 1) : zeName;
                     if (zeFile.equalsIgnoreCase(targetName) || zeFile.equalsIgnoreCase(targetLower)) {
-                        entry = ze;
+                        entry = e.getValue();
                         break;
                     }
                 }
@@ -736,6 +744,12 @@ public class EpubParser {
             if (contentWithImages.paraTypes != null && !contentWithImages.paraTypes.isEmpty()) {
                 chapter.setParagraphTypes(contentWithImages.paraTypes);
             }
+            // ★ 设置图片路径
+            if (contentWithImages.imagePaths != null && !contentWithImages.imagePaths.isEmpty()) {
+                for (String imgPath : contentWithImages.imagePaths) {
+                    chapter.addImagePath(imgPath);
+                }
+            }
             result.chapters.add(chapter);
         }
     }
@@ -815,7 +829,9 @@ public class EpubParser {
         String text = "";
         /** 从原始 HTML 中提取的标题（从 <h1>/<h2>/<title> 标签获取） */
         String rawTitle;
-        /** 每个段落的类型（对应 text 按 \\n 分割后的段落） */
+        /** ★ 从 <img> 标签中提取的图片路径列表（相对 EPUB ZIP 根目录） */
+        final List<String> imagePaths = new ArrayList<String>();
+        /** 每个段落的类型（对应 text 按 \n 分割后的段落） */
         List<Integer> paraTypes = new ArrayList<Integer>();
     }
 
@@ -905,7 +921,19 @@ public class EpubParser {
                     //   保证标记数 = 实际段数（trim 后可能出现前导空段，最后做对齐）
                     if (tagName.equals("br")) {
                         out.append('\n');
-                    } else if (!tagIsClosing && BLOCK_TAGS.contains(tagName)) {
+                    } else if (tagName.equals("img")) {
+                                            // ★ 从 <img> 标签提取 src 属性，解析为绝对路径，存入图片列表
+                                            String src = extractSrcFromTag(tagContent);
+                                            if (src != null && !src.isEmpty()) {
+                                                String resolved = resolveImagePath(opfDir, src);
+                                                if (resolved != null) {
+                                                    result.imagePaths.add(resolved);
+                                                    // ★ 在文本中插入 [[IMAGE:path]] 标记，ReaderView 据此渲染图片
+                                                    out.append("[[IMAGE:").append(resolved).append("]]");
+                                                }
+                                            }
+                                            // ★ img 标签在文本中留下标记，状态保持
+                                        } else if (!tagIsClosing && BLOCK_TAGS.contains(tagName)) {
                         // 块级标签开启：换行 + 设置新段落类型
                         out.append('\n');
                         currentParaType = getParagraphType(tagName);
@@ -1208,7 +1236,8 @@ public class EpubParser {
         return new File(getCacheDir(epubFile), cacheName);
     }
 
-    private static final String CACHE_VERSION = "v3";
+    // ★ 缓存版本号 v4：移除图片 Base64，改为仅存路径，旧缓存自动失效重建
+    private static final String CACHE_VERSION = "v4";
 
     private static EpubResult readCache(File file) {
         File cacheFile = getCacheFile(file);
@@ -1256,6 +1285,11 @@ public class EpubParser {
                     paraTypes.add(Integer.parseInt(reader.readLine().trim()));
                 }
                 chapter.setParagraphTypes(paraTypes);
+                // ★ 读取图片路径列表
+                int imgCount = Integer.parseInt(reader.readLine().trim());
+                for (int ip = 0; ip < imgCount; ip++) {
+                    chapter.addImagePath(unescapeFromCache(reader.readLine()));
+                }
                 result.chapters.add(chapter);
             }
             return result;
@@ -1292,6 +1326,13 @@ public class EpubParser {
                 for (int p = 0; p < ptCount; p++) {
                     writer.write(paraTypes.get(p) + "\n");
                 }
+                // ★ 写入图片路径列表
+                List<String> imgPaths = ch.getImagePaths();
+                int imgCount = (imgPaths == null) ? 0 : imgPaths.size();
+                writer.write(imgCount + "\n");
+                for (int ip = 0; ip < imgCount; ip++) {
+                    writer.write(escapeForCache(imgPaths.get(ip)) + "\n");
+                }
             }
             writer.flush(); writer.close(); writer = null;
             if (cacheFile.exists()) cacheFile.delete();
@@ -1308,6 +1349,10 @@ public class EpubParser {
      * ★ I-3: 缓存转义——将换行符/回车符替换为占位符，读取时还原。
      * 避免章节标题中的换行符破坏缓存的逐行读取格式。
      */
+    /**
+     * ★ I-3: 缓存转义——将换行符/回车符替换为占位符，读取时还原。
+     * 避免章节标题中的换行符破坏缓存的逐行读取格式。
+     */
     private static String escapeForCache(String s) {
         return s.replace("\r", "\uE002").replace("\n", "\uE003");
     }
@@ -1316,7 +1361,77 @@ public class EpubParser {
         return s.replace("\uE003", "\n").replace("\uE002", "\r");
     }
 
-    /** 验证是否为有效的 EPUB 文件 */
+    // ===== 图片路径提取工具方法 =====
+
+    /** 从 <img src="..."> 标签内容中提取 src 属性值 */
+    private static String extractSrcFromTag(String tagContent) {
+        if (tagContent == null || tagContent.isEmpty()) return null;
+        int srcIdx = tagContent.toLowerCase().indexOf("src=");
+        if (srcIdx == -1) return null;
+        int start = tagContent.indexOf('"', srcIdx + 4);
+        if (start == -1) start = tagContent.indexOf('\'', srcIdx + 4);
+        if (start == -1) return null;
+        start++;
+        int end = tagContent.indexOf('"', start);
+        if (end == -1) end = tagContent.indexOf('\'', start);
+        if (end == -1) return null;
+        return tagContent.substring(start, end);
+    }
+
+    /** 将相对图片路径解析为 ZIP 内的绝对路径 */
+        private static String resolveImagePath(String opfDir, String relativeSrc) {
+            if (relativeSrc == null || relativeSrc.isEmpty()) return null;
+            String combined = opfDir + relativeSrc;
+            return combined.replace("\\", "/").replace("./", "");
+        }
+
+        /** 从 ZIP 中读取所有所需图片的原始字节并填充到 result.images */
+        private static void extractAllImageBytes(ZipFile zipFile, EpubResult result) {
+            if (result == null) return;
+            if (result.chapters == null || result.chapters.isEmpty()) return;
+            // 收集所有章节引用的图片路径
+            java.util.Set<String> allPaths = new java.util.HashSet<String>();
+            for (Chapter ch : result.chapters) {
+                List<String> paths = ch.getImagePaths();
+                if (paths != null) {
+                    allPaths.addAll(paths);
+                }
+            }
+            if (allPaths.isEmpty()) {
+                Log.d(TAG, "无图片需要提取");
+                return;
+            }
+            Log.d(TAG, "提取图片字节: " + allPaths.size() + " 张");
+            for (String path : allPaths) {
+                String normalized = path.replace('\\', '/');
+                ZipEntry entry = zipFile.getEntry(normalized);
+                if (entry == null && normalized.startsWith("./")) {
+                    normalized = normalized.substring(2);
+                    entry = zipFile.getEntry(normalized);
+                }
+                if (entry != null) {
+                    InputStream is = null;
+                    try {
+                        is = zipFile.getInputStream(entry);
+                        ByteArrayOutputStream bos = new ByteArrayOutputStream((int) Math.max(entry.getSize(), 4096));
+                        byte[] buf = new byte[8192];
+                        int len;
+                        while ((len = is.read(buf)) != -1) {
+                            bos.write(buf, 0, len);
+                        }
+                        result.images.put(normalized, bos.toByteArray());
+                    } catch (IOException e) {
+                        Log.w(TAG, "读取图片失败: " + normalized, e);
+                    } finally {
+                        if (is != null) try { is.close(); } catch (IOException e) { }
+                    }
+                } else {
+                    Log.w(TAG, "ZIP 中找不到图片: " + normalized);
+                }
+            }
+        }
+
+        /** 验证是否为有效的 EPUB 文件 */
     public static boolean isValidEpub(File file) {
         if (file == null || !file.exists()) return false;
         if (!file.getName().toLowerCase().endsWith(".epub")) return false;

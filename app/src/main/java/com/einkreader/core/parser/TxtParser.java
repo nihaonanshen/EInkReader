@@ -33,7 +33,7 @@ public class TxtParser {
     private static final String TAG = "TxtParser";
     private static final int DEFAULT_CHAPTER_SIZE = 3000; // 无标题时按3000字一章
     private static final String CACHE_DIR_NAME = "txt_parse_cache";
-    private static final String CACHE_VERSION = "v2";  // 章节识别规则变更时递增，强制旧缓存失效
+    private static final String CACHE_VERSION = "v3";  // ★ v3: 移除 fullContent 急切加载，改为懒加载
 
     // ===== 章节标题正则（综合版，覆盖主流中文小说格式）=====
     // 完整版：第X章/回/节 + 可选标题
@@ -100,11 +100,26 @@ public class TxtParser {
     public static class ParseResult {
         public String bookTitle;
         public String encoding;
-        public String fullContent;      // 全书全文（搜索用）
+        /** ★ 全文内容（懒加载：仅在需要时构建，节省内存和 CPU） */
+        public String fullContent;
+        private boolean fullContentBuilt = false;
         public List<Chapter> chapters;
 
         public ParseResult() {
             chapters = new ArrayList<Chapter>();
+        }
+
+        /** ★ 获取全文，仅在首次构建 */
+        public String getFullContent() {
+            if (!fullContentBuilt && fullContent == null && chapters != null) {
+                StringBuilder sb = new StringBuilder();
+                for (Chapter c : chapters) {
+                    if (c.getContent() != null) sb.append(c.getContent());
+                }
+                fullContent = sb.toString();
+                fullContentBuilt = true;
+            }
+            return fullContent;
         }
     }
 
@@ -287,9 +302,9 @@ public class TxtParser {
             com.einkreader.ui.reader.DebugLog.log("Txt", "检测到章节: " + result.chapters.size() + "个");
         }
 
-        // 全文 = 解码后的字符串（ReaderActivity 未使用，为搜索功能保留）
-        result.fullContent = fullText;
-
+        // ★ 全文由 getFullContent() 懒加载构建，此处不再急切赋值，节省内存
+        // 注意：若上下文需要全文搜索，请使用 result.getFullContent()
+    
         Log.i(TAG, "解析完成: " + file.getName() + " → " + result.chapters.size() + "章 编码=" + result.encoding);
         return result;
     }
