@@ -32,12 +32,12 @@
 
 ### 下载 APK
 
-前往 [Releases](https://github.com/xfl1996/EInkReader/releases) 页面下载最新 APK 安装包。
+前往 [Releases](https://github.com/nihaonanshen/EInkReader/releases) 页面下载最新 APK 安装包。
 
 ### 从源码构建
 
 ```bash
-git clone https://github.com/xfl1996/EInkReader.git
+git clone https://github.com/nihaonanshen/EInkReader.git
 cd EInkReader
 ./gradlew assembleDebug
 ```
@@ -96,19 +96,6 @@ app/src/main/java/com/einkreader/
 │       └── AboutActivity.java        # 关于页面
 └── EInkReaderApp.java                # Application 入口（初始化 DatabaseHelper）
 ```
-
----
-
-## 开发背景
-
-这个项目的作者是 Android 开发的零基础新手，完全依靠 AI 编程助手来完成代码编写。整个过程展示了 AI 辅助编程的可能性——从零开始构建一个功能完整的 Android 应用。
-
-**开发过程：**
-1. 用自然语言向 AI 描述需求  
-2. AI 生成代码和修改方案  
-3. 构建 APK 安装到墨水屏设备上测试  
-4. 发现 Bug 后描述现象，AI 定位并修复  
-5. 功能迭代：从基本阅读到书架管理、搜索、夜间模式等  
 
 ---
 
