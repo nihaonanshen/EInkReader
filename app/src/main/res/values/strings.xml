@@ -15,4 +15,9 @@
     <string name="prologue">引子</string>
     <string name="last_chapter">已经是第一章了</string>
     <string name="next_chapter">已经是最后一章了</string>
+        <string name="btn_font_small">字小</string>
+        <string name="btn_font_large">字大</string>
+        <string name="btn_brightness_low">亮-</string>
+        <string name="btn_brightness_high">亮+</string>
+        <string name="btn_full_refresh">全刷</string>
 </resources>

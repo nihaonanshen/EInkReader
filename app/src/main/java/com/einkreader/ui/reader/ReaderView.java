@@ -9,6 +9,7 @@ import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.util.AttributeSet;
+import android.util.LruCache;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.Looper;
@@ -36,7 +37,7 @@ public class ReaderView extends View {
     private float paragraphSpacing = 1.8f;
     private Typeface typeface = Typeface.DEFAULT;
     private int bgColor = Color.WHITE;
-    private int fgColor = Color.BLACK;
+    private volatile int fgColor = Color.BLACK;
     private int mutedColor = 0xFF999999;
     private int paddingLeft = 20;
     private int paddingRight = 20;
@@ -51,7 +52,8 @@ public class ReaderView extends View {
 
     // ==================== 图片数据 ====================
     private Map<String, byte[]> chapterImages;
-    private List<Bitmap> loadedBitmaps = new ArrayList<Bitmap>();
+    private static final int MAX_BITMAP_CACHE_BYTES = 8 * 1024 * 1024;
+    private LruCache<String, Bitmap> bitmapCache;
 
     // ==================== 后台分页线程 ====================
     private HandlerThread layoutThread;
@@ -140,6 +142,12 @@ public class ReaderView extends View {
 
     public ReaderView(Context context, AttributeSet attrs) {
         super(context, attrs);
+        bitmapCache = new LruCache<String, Bitmap>(MAX_BITMAP_CACHE_BYTES) {
+            @Override
+            protected int sizeOf(String key, Bitmap bitmap) {
+                return bitmap.getByteCount();
+            }
+        };
         init();
     }
 
@@ -212,10 +220,10 @@ public class ReaderView extends View {
     }
 
     public void setChapterImages(Map<String, byte[]> images) {
-        for (Bitmap bmp : loadedBitmaps) {
+        for (Bitmap bmp : bitmapCache.snapshot().values()) {
             if (bmp != null && !bmp.isRecycled()) bmp.recycle();
         }
-        loadedBitmaps.clear();
+        bitmapCache.evictAll();
         this.chapterImages = images;
     }
 
@@ -229,10 +237,10 @@ public class ReaderView extends View {
     public void setChapter(Chapter chapter) {
         this.currentChapter = chapter;
         this.currentPage = 0;
-        for (Bitmap bmp : loadedBitmaps) {
+        for (Bitmap bmp : bitmapCache.snapshot().values()) {
             if (bmp != null && !bmp.isRecycled()) bmp.recycle();
         }
-        loadedBitmaps.clear();
+        bitmapCache.evictAll();
         scheduleLayout();
     }
 
@@ -679,7 +687,8 @@ public class ReaderView extends View {
 
     // ==================== 尺寸变化 ====================
 
-    private boolean layoutPending = false;
+    private volatile boolean layoutPending = false;
+    private int layoutGeneration = 0;
     private int lastMeasuredW = 0, lastMeasuredH = 0;
 
     @Override
@@ -691,6 +700,7 @@ public class ReaderView extends View {
             isLayoutReady = true;
             if (currentChapter != null && !layoutPending) {
                 layoutPending = true;
+                final int gen = ++layoutGeneration;
                 scheduleLayout();
             }
         }
@@ -813,7 +823,7 @@ public class ReaderView extends View {
                 Bitmap scaled = Bitmap.createScaledBitmap(bmp, rw, rh, true);
                 if (scaled != bmp) bmp.recycle();
                 ib.bitmap = scaled;
-                loadedBitmaps.add(scaled);
+                bitmapCache.put("img_" + System.nanoTime(), scaled);
             }
         }
 

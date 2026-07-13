@@ -33,6 +33,9 @@ public class EInkReaderApp extends Application {
      * 获取全局 BookStorage 实例
      */
     public static BookStorage getBookStorage() {
+        if (bookStorage == null) {
+            throw new IllegalStateException("BookStorage not initialized yet");
+        }
         return bookStorage;
     }
 }

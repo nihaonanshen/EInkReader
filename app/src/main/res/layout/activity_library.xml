@@ -11,7 +11,7 @@
         android:layout_height="48dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="#EEEEEE"
+        android:background="@color/bg_light"
         android:paddingLeft="16dp"
         android:paddingRight="16dp">
 
@@ -51,7 +51,7 @@
         android:layout_height="56dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="#EEEEEE">
+        android:background="@color/bg_light">
 
         <TextView
             android:id="@+id/btn_import"
@@ -64,10 +64,7 @@
             android:textSize="18sp"
             android:clickable="true" />
 
-        <View
-            android:layout_width="1dp"
-            android:layout_height="36dp"
-            android:background="#CCCCCC" />
+        <View android:layout_width="1dp" android:layout_height="36dp" android:background="@drawable/divider" />
 
         <TextView
             android:id="@+id/btn_recent"
@@ -80,10 +77,7 @@
             android:textSize="18sp"
             android:clickable="true" />
 
-        <View
-            android:layout_width="1dp"
-            android:layout_height="36dp"
-            android:background="#CCCCCC" />
+        <View android:layout_width="1dp" android:layout_height="36dp" android:background="@drawable/divider" />
 
         <TextView
             android:id="@+id/btn_sort"
@@ -96,10 +90,7 @@
             android:textSize="18sp"
             android:clickable="true" />
 
-        <View
-            android:layout_width="1dp"
-            android:layout_height="36dp"
-            android:background="#CCCCCC" />
+        <View android:layout_width="1dp" android:layout_height="36dp" android:background="@drawable/divider" />
 
         <TextView
             android:id="@+id/btn_refresh_settings"
@@ -112,10 +103,7 @@
             android:textSize="18sp"
             android:clickable="true" />
 
-        <View
-            android:layout_width="1dp"
-            android:layout_height="36dp"
-            android:background="#CCCCCC" />
+        <View android:layout_width="1dp" android:layout_height="36dp" android:background="@drawable/divider" />
 
         <TextView
             android:id="@+id/btn_about"

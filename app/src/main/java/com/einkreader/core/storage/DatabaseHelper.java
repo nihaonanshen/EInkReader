@@ -5,8 +5,10 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
+import android.os.Build;
 
 import com.einkreader.ui.reader.DebugLog;
+import android.util.LruCache;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -47,6 +49,7 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
 
     private Context context;
     private volatile boolean initialized = false;
+    private final LruCache<String, BookProgress> progressCache = new LruCache<>(64);
 
     public DatabaseHelper(Context context) {
         super(context.getApplicationContext(), DB_NAME, null, DB_VERSION);
@@ -82,15 +85,45 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
 
     @Override
     public void onUpgrade(SQLiteDatabase db, int oldVersion, int newVersion) {
-        // 当前版本 1，暂不提供迁移。未来如需升级，在此处按 oldVersion 分段处理。
+        if (oldVersion < 1) {
+            db.execSQL("CREATE TABLE IF NOT EXISTS " + TABLE_BOOKS + " ("
+                    + KEY_FILE_KEY + " TEXT PRIMARY KEY,"
+                    + KEY_FILE_PATH + " TEXT NOT NULL,"
+                    + KEY_TITLE + " TEXT,"
+                    + KEY_FORMAT + " TEXT,"
+                    + KEY_FILE_SIZE + " INTEGER DEFAULT 0,"
+                    + KEY_LAST_MODIFIED + " INTEGER DEFAULT 0,"
+                    + KEY_ADDED_AT + " INTEGER DEFAULT 0,"
+                    + KEY_TOTAL_CHAPTERS + " INTEGER DEFAULT 0,"
+                    + KEY_LAST_READ_TIME + " INTEGER DEFAULT 0,"
+                    + KEY_TOTAL_READ_MS + " INTEGER DEFAULT 0"
+                    + ")");
+            db.execSQL("CREATE TABLE IF NOT EXISTS " + TABLE_PROGRESS + " ("
+                    + KEY_FILE_KEY + " TEXT PRIMARY KEY,"
+                    + KEY_CHAPTER_INDEX + " INTEGER DEFAULT 0,"
+                    + KEY_PAGE_INDEX + " INTEGER DEFAULT 0,"
+                    + KEY_TOTAL_CHAPTERS + " INTEGER DEFAULT 0,"
+                    + KEY_UPDATED_AT + " INTEGER DEFAULT 0"
+                    + ")");
+        }
+        // 未来升级在此处按 oldVersion 分段处理
+    }
+
+    @Override
+    public void onConfigure(SQLiteDatabase db) {
+        super.onConfigure(db);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
+            db.enableWriteAheadLogging();
+        } else {
+            db.execSQL("PRAGMA journal_mode=WAL");
+        }
     }
 
     @Override
     public void initialize() {
         if (initialized) return;
         try {
-            SQLiteDatabase db = getWritableDatabase();
-            db.execSQL("PRAGMA journal_mode=WAL");
+            getWritableDatabase(); // 触发 onCreate 或 onUpgrade
             initialized = true;
             DebugLog.log(TAG, "Database initialized");
         } catch (Exception e) {
@@ -164,20 +197,27 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
     @Override
     public synchronized void deleteBook(String fileKey) {
         if (fileKey == null) return;
+        progressCache.remove(fileKey);
+        SQLiteDatabase db = getWritableDatabase();
         try {
-            SQLiteDatabase db = getWritableDatabase();
+            db.beginTransaction();
             db.delete(TABLE_BOOKS, KEY_FILE_KEY + "=?", new String[]{fileKey});
             db.delete(TABLE_PROGRESS, KEY_FILE_KEY + "=?", new String[]{fileKey});
+            db.setTransactionSuccessful();
         } catch (Exception e) {
             DebugLog.log(TAG, "deleteBook failed: " + e.getMessage());
+        } finally {
+            db.endTransaction();
         }
     }
 
     @Override
     public synchronized void saveProgress(BookProgress progress) {
         if (progress == null || progress.fileKey == null) return;
+        progressCache.put(progress.fileKey, progress);
+        SQLiteDatabase db = getWritableDatabase();
         try {
-            SQLiteDatabase db = getWritableDatabase();
+            db.beginTransaction();
             ContentValues cv = new ContentValues();
             cv.put(KEY_FILE_KEY, progress.fileKey);
             cv.put(KEY_CHAPTER_INDEX, progress.chapterIndex);
@@ -190,14 +230,19 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
             ContentValues bcv = new ContentValues();
             bcv.put(KEY_LAST_READ_TIME, System.currentTimeMillis());
             db.update(TABLE_BOOKS, bcv, KEY_FILE_KEY + "=?", new String[]{progress.fileKey});
+            db.setTransactionSuccessful();
         } catch (Exception e) {
             DebugLog.log(TAG, "saveProgress failed: " + e.getMessage());
+        } finally {
+            db.endTransaction();
         }
     }
 
     @Override
     public synchronized BookProgress loadProgress(String fileKey) {
         if (fileKey == null) return null;
+        BookProgress cached = progressCache.get(fileKey);
+        if (cached != null) return cached;
         Cursor c = null;
         try {
             SQLiteDatabase db = getReadableDatabase();
@@ -209,6 +254,7 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
                 p.pageIndex = c.getInt(c.getColumnIndex(KEY_PAGE_INDEX));
                 p.totalChapters = c.getInt(c.getColumnIndex(KEY_TOTAL_CHAPTERS));
                 p.updatedAt = c.getLong(c.getColumnIndex(KEY_UPDATED_AT));
+                progressCache.put(fileKey, p);
                 return p;
             }
         } catch (Exception e) {

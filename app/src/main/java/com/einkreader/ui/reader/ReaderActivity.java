@@ -90,6 +90,7 @@ public class ReaderActivity extends Activity {
     private long readingStartTime;
     private volatile boolean isDestroyed = false;
     private volatile boolean bookLoaded = false;
+    private static final long LOADING_TIMEOUT_MS = 30000L;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -346,6 +347,7 @@ public class ReaderActivity extends Activity {
     private void exitFullOverlay() {
         fullOverlayMode = FullOverlayMode.NONE;
         if (fullOverlay != null) fullOverlay.setVisibility(View.GONE);
+        if (readerView != null) readerView.requestFocus();
         // 恢复菜单显示
         if (menuVisible) {
             if (topStatusBar != null) topStatusBar.setVisibility(View.VISIBLE);
@@ -504,7 +506,8 @@ public class ReaderActivity extends Activity {
             for (String k : bm.getAll().keySet()) {
                 try {
                     if (i == idx) {
-                        int ch = Integer.parseInt(k);
+                        String chapterKey = k.contains("_") ? k.split("_")[0] : k;
+                        int ch = Integer.parseInt(chapterKey);
                         switchChapterTo(ch);
                         return;
                     }
@@ -589,7 +592,20 @@ public class ReaderActivity extends Activity {
             int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
             loadingFilename.setText(slash >= 0 ? name.substring(slash + 1) : name);
         }
-        if (loadingOverlay != null) loadingOverlay.setVisibility(View.VISIBLE);
+        if (loadingOverlay != null) {
+            loadingOverlay.setVisibility(View.VISIBLE);
+            // 解析超时兜底——30秒后自动隐藏 loading，防止永久白屏
+            uiHandler.postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (isDestroyed) return;
+                    if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
+                        loadingOverlay.setVisibility(View.GONE);
+                        Toast.makeText(ReaderActivity.this, "加载超时", Toast.LENGTH_LONG).show();
+                    }
+                }
+            }, LOADING_TIMEOUT_MS);
+        }
         filePath = getIntent().getStringExtra("file_path");
         String fileUri = getIntent().getStringExtra("file_uri");
         if ((filePath == null || filePath.isEmpty()) && fileUri == null) {
@@ -902,7 +918,7 @@ public class ReaderActivity extends Activity {
         if (progressSeekBar == null) return;
         int progress = 0;
         if (totalPages > 0) {
-            progress = (int) ((currentPage * 1000f) / (totalPages - 1));
+            progress = (int) ((currentPage * 1000f) / Math.max(1, totalPages - 1));
             if (progress > 1000) progress = 1000;
         }
         progressSeekBar.setProgress(progress);
@@ -916,26 +932,33 @@ public class ReaderActivity extends Activity {
 
     private void saveProgress() {
         if (chapters == null || fileKey == null) return;
-        try {
-            int chIdx = currentChapterIndex;
-            int pageIdx = readerView.getCurrentPage();
+        final int chIdx = currentChapterIndex;
+        final int pageIdx = readerView.getCurrentPage();
+        final int totalCh = chapters.size();
 
-            prefs.edit()
-                    .putInt("lc_" + fileKey, chIdx)
-                    .putInt("lp_" + fileKey, pageIdx)
-                    .putInt("total_ch_" + fileKey, chapters.size())
-                    .apply();
+        // 异步保存，避免阻塞 UI 翻页
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    prefs.edit()
+                            .putInt("lc_" + fileKey, chIdx)
+                            .putInt("lp_" + fileKey, pageIdx)
+                            .putInt("total_ch_" + fileKey, totalCh)
+                            .apply();
 
-            BookStorage storage = EInkReaderApp.getBookStorage();
-            if (storage != null) {
-                BookStorage.BookProgress prog = new BookStorage.BookProgress();
-                prog.fileKey = fileKey;
-                prog.chapterIndex = chIdx;
-                prog.pageIndex = pageIdx;
-                prog.totalChapters = chapters.size();
-                storage.saveProgress(prog);
+                    BookStorage storage = EInkReaderApp.getBookStorage();
+                    if (storage != null) {
+                        BookStorage.BookProgress prog = new BookStorage.BookProgress();
+                        prog.fileKey = fileKey;
+                        prog.chapterIndex = chIdx;
+                        prog.pageIndex = pageIdx;
+                        prog.totalChapters = totalCh;
+                        storage.saveProgress(prog);
+                    }
+                } catch (Exception ignored) {}
             }
-        } catch (Exception ignored) {}
+        }).start();
     }
 
     private void persistBookRecord(String fp, String fu, boolean isContent, int totalChapters) {

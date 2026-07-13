@@ -228,7 +228,7 @@
                 android:textColor="@color/black"
                 android:textSize="16sp" />
 
-            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@drawable/divider" />
 
             <TextView
                 android:id="@+id/btn_toc"
@@ -240,7 +240,7 @@
                 android:textColor="@color/black"
                 android:textSize="16sp" />
 
-            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@drawable/divider" />
 
             <TextView
                 android:id="@+id/btn_bookmark"
@@ -252,7 +252,7 @@
                 android:textColor="@color/black"
                 android:textSize="16sp" />
 
-            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@drawable/divider" />
 
             <TextView
                 android:id="@+id/btn_settings"
@@ -264,7 +264,7 @@
                 android:textColor="@color/black"
                 android:textSize="16sp" />
 
-            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@drawable/divider" />
 
             <TextView
                 android:id="@+id/btn_show_log"
@@ -278,7 +278,7 @@
         </LinearLayout>
 
         <!-- 分隔线 -->
-        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/black" />
+        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/primary" />
 
         <!-- 第二行：字号和亮度快捷按钮 -->
         <LinearLayout
@@ -297,7 +297,7 @@
                 android:textColor="@color/black"
                 android:textSize="16sp" />
 
-            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@drawable/divider" />
 
             <TextView
                 android:id="@+id/btn_font_plus"
@@ -309,7 +309,7 @@
                 android:textColor="@color/black"
                 android:textSize="16sp" />
 
-            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@drawable/divider" />
 
             <TextView
                 android:id="@+id/btn_bright_minus"
@@ -321,7 +321,7 @@
                 android:textColor="@color/black"
                 android:textSize="16sp" />
 
-            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@drawable/divider" />
 
             <TextView
                 android:id="@+id/btn_bright_plus"
@@ -333,7 +333,7 @@
                 android:textColor="@color/black"
                 android:textSize="16sp" />
 
-            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@color/black" />
+            <View android:layout_width="1dp" android:layout_height="32dp" android:background="@drawable/divider" />
 
             <TextView
                 android:id="@+id/btn_full_refresh"
@@ -347,7 +347,7 @@
         </LinearLayout>
 
         <!-- 分隔线 -->
-        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/black" />
+        <View android:layout_width="match_parent" android:layout_height="1dp" android:background="@color/primary" />
 
         <!-- 进度条 + 页码 -->
         <LinearLayout
@@ -373,7 +373,7 @@
                 android:layout_weight="1"
                 android:layout_marginLeft="10dp"
                 android:layout_marginRight="10dp"
-                android:max="1000" />
+                android:max="100" />
         </LinearLayout>
     </LinearLayout>
 

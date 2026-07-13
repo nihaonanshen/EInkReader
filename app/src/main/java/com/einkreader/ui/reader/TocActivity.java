@@ -168,6 +168,15 @@ public class TocActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT, dp(64)));
 
         setContentView(root);
+
+        btnPrev.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) { prevPage(); }
+        });
+        btnNext.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) { nextPage(); }
+        });
     }
 
     private void renderPage() {
@@ -233,7 +242,9 @@ public class TocActivity extends Activity {
                         return true;
                     }
                     if (action == android.view.MotionEvent.ACTION_UP) {
-                        sSelectedChapter = fi;
+                        Intent result = new Intent();
+                        result.putExtra(RESULT_CHAPTER_INDEX, fi);
+                        setResult(Activity.RESULT_OK, result);
                         DebugLog.log("Toc", "click idx=" + fi + " total=" + chapterTitles.size());
                         finish();
                         return true;

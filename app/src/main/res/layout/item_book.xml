@@ -23,7 +23,7 @@
             android:textColor="@android:color/white"
             android:textSize="15sp"
             android:textStyle="bold"
-            android:background="#333333" />
+            android:background="@color/primary_dark" />
 
         <!-- 右侧信息 -->
         <LinearLayout
@@ -49,7 +49,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:textColor="#666666"
+                android:textColor="@color/text_secondary"
                 android:textSize="13sp"
                 android:maxLines="1"
                 android:ellipsize="end" />
@@ -74,7 +74,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="2dp"
-                android:textColor="#333333"
+                android:textColor="@color/gray_dark"
                 android:textSize="12sp"
                 android:textStyle="bold"
                 android:visibility="gone" />
@@ -87,5 +87,5 @@
         android:layout_height="0.5dp"
         android:layout_marginLeft="12dp"
         android:layout_marginRight="12dp"
-        android:background="#DDDDDD" />
+        android:background="@color/gray_light" />
 </LinearLayout>

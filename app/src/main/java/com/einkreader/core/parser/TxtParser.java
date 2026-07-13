@@ -34,6 +34,7 @@ public class TxtParser {
     private static final int DEFAULT_CHAPTER_SIZE = 3000; // 无标题时按3000字一章
     private static final String CACHE_DIR_NAME = "txt_parse_cache";
     private static final String CACHE_VERSION = "v3";  // ★ v3: 移除 fullContent 急切加载，改为懒加载
+    private static final long MAX_FILE_SIZE = 50 * 1024 * 1024;  // 50 MB 上限
 
     // ===== 章节标题正则（综合版，覆盖主流中文小说格式）=====
     // 完整版：第X章/回/节 + 可选标题
@@ -191,6 +192,9 @@ public class TxtParser {
         result.bookTitle = extractTitle(file);
         com.einkreader.ui.reader.DebugLog.log("Txt", "解析: " + file.getName() + " 大小=" + file.length());
 
+        if (file.length() > MAX_FILE_SIZE) {
+            throw new IOException("File too large: " + file.length() + " bytes");
+        }
         // ★ 一次读取全文件到 byte[]，后续所有编码尝试都用同一份字节数组
         byte[] fileBytes;
         InputStream fis = null;
@@ -574,6 +578,9 @@ public class TxtParser {
                     read += n;
                 }
                 String content = new String(buf, 0, read);
+                if (contentLen != content.length() && contentLen > 0) {
+                    contentLen = content.length();
+                }
                 result.chapters.add(new Chapter(chTitle, content, lineStart, lineEnd));
                 fullBuilder.append(content);
             }

@@ -52,12 +52,7 @@ public class EinkRefreshManager {
         this.callback = cb;
         // 检测设备是否支持 E-Ink 系统调用
         try {
-            Class<?> cls = Class.forName("android.os.SystemProperties");
-            Method get = cls.getMethod("get", String.class);
-            String epdMode = (String) get.invoke(null, "/sys/class/graphics/fb0/epd_mode");
-            if (epdMode != null) {
-                sysfsAvailable = true;
-            }
+            sysfsAvailable = new java.io.File("/sys/class/graphics/fb0/epd_mode").exists();
         } catch (Exception e) {
             sysfsAvailable = false;
         }

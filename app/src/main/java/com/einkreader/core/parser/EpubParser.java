@@ -72,7 +72,8 @@ public class EpubParser {
     private static final Pattern REGEX_LEADING_SEP = Pattern.compile("^[_\\-\\s]+");
     private static final Pattern REGEX_TRAILING_SEP2 = Pattern.compile("[_\\-\\s]+$");
     private static final Pattern REGEX_LEADING_ZERO = Pattern.compile("^0+");
-    private static final Pattern REGEX_FAKE_CHAPTER = Pattern.compile("(?i)chapter[_\\-\\s]*\\d+");
+    // 跳过 "chapter_1" "chapter-1" 等假章节，保留 "Chapter 1: ..."
+    private static final Pattern REGEX_FAKE_CHAPTER = Pattern.compile("(?i)chapter[\\-_]*\\d+");
     // 全角空格清理（U+3000 中文空格）
     private static final Pattern REGEX_FULLWIDTH_SPACE = Pattern.compile("\\u3000");
     private static final Pattern REGEX_LEADING_FULLWIDTH = Pattern.compile("^[\\u3000]+");
@@ -122,12 +123,7 @@ public class EpubParser {
 
     public static EpubResult parse(File file) throws IOException {
         String lockKey = file.getAbsolutePath();
-        Object lock = sParseLocks.get(lockKey);
-        if (lock == null) {
-            Object newLock = new Object();
-            Object existing = sParseLocks.putIfAbsent(lockKey, newLock);
-            lock = (existing != null) ? existing : newLock;
-        }
+        Object lock = sParseLocks.computeIfAbsent(lockKey, k -> new Object());
         synchronized (lock) {
             try {
                 EpubResult cached = readCache(file);

@@ -147,8 +147,13 @@ public class LibraryActivity extends Activity {
             }
         });
 
-        // 扫描书籍
-        scanBooks();
+        // 扫描书籍（后台线程避免主线程 I/O 卡顿）
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                scanBooks();
+            }
+        }).start();
     }
 
     /**
@@ -263,6 +268,8 @@ public class LibraryActivity extends Activity {
     /**
      * 扫描单个目录下的书籍（递归扫描子目录），结果合并到 dbMap（已存在的不覆盖）
      */
+    private static final int MAX_SCAN_DEPTH = 4;
+
     private void scanDir(File dir, java.util.HashSet<String> seenPaths,
                          java.util.HashMap<String, BookInfo> dbMap) {
         // 第一步：扫描当前目录下的所有书籍文件
@@ -423,7 +430,9 @@ public class LibraryActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
-        scanBooks();
+        if (books.isEmpty()) {
+            scanBooks();
+        }
     }
 
     /**
@@ -435,6 +444,7 @@ public class LibraryActivity extends Activity {
         String title;
         String info;
         BookStorage.BookRecord dbRecord;
+        public BookStorage.BookProgress preloadedProgress;
 
         BookInfo(File file) {
             this.file = file;

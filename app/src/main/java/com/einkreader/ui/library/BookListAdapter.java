@@ -28,6 +28,18 @@ public class BookListAdapter extends BaseAdapter {
     public BookListAdapter(Context context, List<LibraryActivity.BookInfo> books) {
         this.context = context;
         this.books = books;
+        preloadProgress();
+    }
+
+    private void preloadProgress() {
+        if (books == null) return;
+        BookStorage storage = EInkReaderApp.getBookStorage();
+        if (storage == null) return;
+        for (LibraryActivity.BookInfo book : books) {
+            if (book.fileKey != null) {
+                book.preloadedProgress = storage.loadProgress(book.fileKey);
+            }
+        }
     }
 
     @Override
@@ -81,14 +93,11 @@ public class BookListAdapter extends BaseAdapter {
         int lastPage = -1;
         int totalCh = 0;
 
-        BookStorage storage = EInkReaderApp.getBookStorage();
-        if (storage != null && book.fileKey != null) {
-            BookStorage.BookProgress prog = storage.loadProgress(book.fileKey);
-            if (prog != null) {
-                lastChapter = prog.chapterIndex;
-                lastPage = prog.pageIndex;
-                totalCh = prog.totalChapters;
-            }
+        BookStorage.BookProgress prog = book.preloadedProgress;
+        if (prog != null) {
+            lastChapter = prog.chapterIndex;
+            lastPage = prog.pageIndex;
+            totalCh = prog.totalChapters;
         }
 
         if (lastChapter < 0) {

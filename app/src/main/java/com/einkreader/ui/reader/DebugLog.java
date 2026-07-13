@@ -26,11 +26,22 @@ import java.util.Locale;
  */
 public class DebugLog {
     private static StringBuilder log = new StringBuilder();
-    private static SimpleDateFormat sdf = new SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault());
-    private static SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+    private static ThreadLocal<SimpleDateFormat> sdf = new ThreadLocal<SimpleDateFormat>() {
+        @Override
+        protected SimpleDateFormat initialValue() {
+            return new SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault());
+        }
+    };
+    private static ThreadLocal<SimpleDateFormat> dateFormat = new ThreadLocal<SimpleDateFormat>() {
+        @Override
+        protected SimpleDateFormat initialValue() {
+            return new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault());
+        }
+    };
     private static boolean fileReady = false;
     private static File logFile = null;
     private static final int MAX_LOG_LEN = 50000;
+    private static int lastFlushedLength = 0;
 
     /** 开发阶段开关：true=开启日志，false=静默（正式版时改为 false） */
     public static boolean ENABLED = true;
@@ -39,7 +50,7 @@ public class DebugLog {
     public static void init() {
         log.setLength(0);
         ensureFile(true);
-        logLine("===== EInkReader Debug Session " + dateFormat.format(new Date()) + " =====");
+        logLine("===== EInkReader Debug Session " + dateFormat.get().format(new Date()) + " =====");
         logLine("Device: " + android.os.Build.MODEL + ", SDK=" + android.os.Build.VERSION.SDK_INT);
         logLine("Density: " + android.content.res.Resources.getSystem().getDisplayMetrics().densityDpi + "dpi");
         flushToFile();
@@ -94,7 +105,7 @@ public class DebugLog {
     // ============ 内部方法 ============
 
     private static String formatLine(String tag, String msg) {
-        return sdf.format(new Date()) + " [" + tag + "] " + msg;
+        return sdf.get().format(new Date()) + " [" + tag + "] " + msg;
     }
 
     private static void logLine(String line) {
@@ -103,6 +114,7 @@ public class DebugLog {
         // 内存日志超长时截断前半部分
         if (log.length() > MAX_LOG_LEN) {
             log.delete(0, log.length() / 2);
+            lastFlushedLength = 0;
         }
 
         // 同时输出到 Logcat（开发阶段）
@@ -137,12 +149,14 @@ public class DebugLog {
 
         try {
             String data = log.toString();
-            // 每次写入前清空文件（简化：最后一次 flush 全量写入）
-            FileOutputStream fos = new FileOutputStream(logFile, false);
+            String newData = data.substring(lastFlushedLength);
+            if (newData.isEmpty()) return;
+            FileOutputStream fos = new FileOutputStream(logFile, true);
             OutputStreamWriter writer = new OutputStreamWriter(fos, "UTF-8");
-            writer.write(data);
+            writer.write(newData);
             writer.close();
             fos.close();
+            lastFlushedLength = data.length();
         } catch (Exception e) {
             // 静默失败
         }

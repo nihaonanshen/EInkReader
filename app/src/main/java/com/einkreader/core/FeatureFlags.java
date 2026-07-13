@@ -13,16 +13,16 @@ public class FeatureFlags {
     public static final boolean ENABLE_RUST = BuildConfig.ENABLE_RUST;
 
     // Rust 编码检测
-    public static boolean USE_RUST_ENCODING_DETING_DETECTOR = ENABLE_RUST;
+    public static volatile boolean USE_RUST_ENCODING_DETECTOR = ENABLE_RUST;
 
     // Rust TXT 解析器（需 NativeBridge 库加载成功才生效）
-    public static boolean USE_RUST_TXT_PARSER = ENABLE_RUST;
+    public static volatile boolean USE_RUST_TXT_PARSER = ENABLE_RUST;
 
     // Rust EPUB 解析器（Phase 3 实现）
-    public static boolean USE_RUST_EPUB_PARSER = ENABLE_RUST;
+    public static volatile boolean USE_RUST_EPUB_PARSER = ENABLE_RUST;
 
     // Rust 页面排版引擎（Phase 4 实现）
-    public static boolean USE_RUST_LAYOUT = ENABLE_RUST;
+    public static volatile boolean USE_RUST_LAYOUT = ENABLE_RUST;
 
     /**
      * 检查 Rust 实现是否可用
