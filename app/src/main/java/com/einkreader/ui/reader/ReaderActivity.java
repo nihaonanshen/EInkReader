@@ -888,6 +888,7 @@ public class ReaderActivity extends Activity {
                     .setNegativeButton("关闭", null)
                     .show();
         } catch (Exception e) {
+            DebugLog.error("UI", "showLogDialog failed", e);
             Toast.makeText(this, "无法读取日志", Toast.LENGTH_SHORT).show();
         }
     }
