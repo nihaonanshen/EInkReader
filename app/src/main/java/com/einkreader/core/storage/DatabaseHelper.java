@@ -127,7 +127,7 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
             initialized = true;
             DebugLog.log(TAG, "Database initialized");
         } catch (Exception e) {
-            DebugLog.log(TAG, "Database init failed: " + e.getMessage());
+            DebugLog.error(TAG, "Database init failed", e);
         }
     }
 
@@ -151,7 +151,7 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
             cv.put(KEY_TOTAL_READ_MS, record.totalReadMs);
             db.insertWithOnConflict(TABLE_BOOKS, null, cv, SQLiteDatabase.CONFLICT_REPLACE);
         } catch (Exception e) {
-            DebugLog.log(TAG, "upsertBook failed: " + e.getMessage());
+            DebugLog.error(TAG, "upsertBook failed", e);
         }
     }
 
@@ -166,7 +166,7 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
                 return cursorToBookRecord(c);
             }
         } catch (Exception e) {
-            DebugLog.log(TAG, "getBook failed: " + e.getMessage());
+            DebugLog.error(TAG, "getBook failed", e);
         } finally {
             if (c != null) c.close();
         }
@@ -187,7 +187,7 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
                 } while (c.moveToNext());
             }
         } catch (Exception e) {
-            DebugLog.log(TAG, "listAllBooks failed: " + e.getMessage());
+            DebugLog.error(TAG, "listAllBooks failed", e);
         } finally {
             if (c != null) c.close();
         }

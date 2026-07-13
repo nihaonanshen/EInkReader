@@ -466,7 +466,9 @@ public class ReaderActivity extends Activity {
                 String v = bm.getString(k, "");
                 list.add(k + " : " + v);
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            DebugLog.error("Bookmark", "loadBookmarks failed", e);
+        }
         bookmarkItems = new ArrayList<>(list);
         bookmarkCurrentPage = 0;
         renderBookmarkPage();
@@ -515,7 +517,8 @@ public class ReaderActivity extends Activity {
                 } catch (NumberFormatException ignore) {
                 }
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            DebugLog.error("Bookmark", "jumpToBookmark failed", e);
         }
     }
 
@@ -533,6 +536,7 @@ public class ReaderActivity extends Activity {
                     (readerView != null ? readerView.getCurrentPage() : 0), title).apply();
             Toast.makeText(this, "已加书签", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
+            DebugLog.error("Bookmark", "addBookmark failed", e);
             Toast.makeText(this, "书签保存失败", Toast.LENGTH_SHORT).show();
         }
     }
@@ -699,56 +703,65 @@ public class ReaderActivity extends Activity {
 
                 final List<Chapter> fch = pc;
                 uiHandler.post(() -> {
-                    if (isDestroyed) return;
-                    if (fch == null || fch.isEmpty()) {
-                        DebugLog.error("Parse", "解析失败: chapters=" + (fch == null ? "null" : "empty"));
-                        Toast.makeText(ReaderActivity.this, "解析失败", Toast.LENGTH_SHORT).show();
-                        finish();
-                        return;
-                    }
-                    DebugLog.log("Load", "书籍加载成功: chapters=" + fch.size());
-                    chapters = fch;
+                    try {
+                        if (isDestroyed) return;
+                        if (fch == null || fch.isEmpty()) {
+                            DebugLog.error("Parse", "解析失败: chapters=" + (fch == null ? "null" : "empty"));
+                            Toast.makeText(ReaderActivity.this, "解析失败", Toast.LENGTH_SHORT).show();
+                            finish();
+                            return;
+                        }
+                        DebugLog.log("Load", "书籍加载成功: chapters=" + fch.size());
+                        chapters = fch;
 
-                    persistBookRecord(fp, fu, isContent, fch.size());
+                        persistBookRecord(fp, fu, isContent, fch.size());
 
-                    int sc = 0, sp = 0;
-                    BookStorage storage = EInkReaderApp.getBookStorage();
-                    if (storage != null) {
-                        BookStorage.BookProgress prog = storage.loadProgress(fileKey);
-                        if (prog != null && prog.chapterIndex < fch.size()) {
-                            sc = prog.chapterIndex;
-                            sp = prog.pageIndex;
+                        int sc = 0, sp = 0;
+                        BookStorage storage = EInkReaderApp.getBookStorage();
+                        if (storage != null) {
+                            BookStorage.BookProgress prog = storage.loadProgress(fileKey);
+                            if (prog != null && prog.chapterIndex < fch.size()) {
+                                sc = prog.chapterIndex;
+                                sp = prog.pageIndex;
+                            } else {
+                                sc = prefs.getInt("lc_" + fileKey, 0);
+                                sp = prefs.getInt("lp_" + fileKey, 0);
+                            }
                         } else {
                             sc = prefs.getInt("lc_" + fileKey, 0);
                             sp = prefs.getInt("lp_" + fileKey, 0);
                         }
-                    } else {
-                        sc = prefs.getInt("lc_" + fileKey, 0);
-                        sp = prefs.getInt("lp_" + fileKey, 0);
-                    }
 
-                    if (TocActivity.sSelectedChapter >= 0 && TocActivity.sSelectedChapter < fch.size()) {
-                        sc = TocActivity.sSelectedChapter;
-                        sp = 0;
-                        TocActivity.sSelectedChapter = -1;
+                        if (TocActivity.sSelectedChapter >= 0 && TocActivity.sSelectedChapter < fch.size()) {
+                            sc = TocActivity.sSelectedChapter;
+                            sp = 0;
+                            TocActivity.sSelectedChapter = -1;
+                        }
+                        if (sc < 0 || sc >= fch.size()) { sc = 0; sp = 0; }
+                        currentChapterIndex = sc;
+                        readerView.setChapter(chapters.get(currentChapterIndex));
+                        // ★ 传递图片字节数据给 ReaderView，用于 [[IMAGE:path]] 渲染
+                        if (epubImageBytes != null) {
+                            readerView.setChapterImages(epubImageBytes);
+                        }
+                        readerView.applySettings();
+                        if (sp > 0 && sp < readerView.getTotalPages())
+                            readerView.goToPage(sp);
+                        updateStatusBar();
+                        updateProgressBar(readerView.getCurrentPage(), readerView.getTotalPages());
+                        updateProgressLabel();
+                        bookLoaded = true;
+                        if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
+                    } catch (Throwable t) {
+                        DebugLog.error("Load", "UI post failed: type=" + t.getClass().getSimpleName(), t);
+                        if (!isDestroyed) {
+                            Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
+                            finish();
+                        }
                     }
-                    if (sc < 0 || sc >= fch.size()) { sc = 0; sp = 0; }
-                    currentChapterIndex = sc;
-                    readerView.setChapter(chapters.get(currentChapterIndex));
-                    // ★ 传递图片字节数据给 ReaderView，用于 [[IMAGE:path]] 渲染
-                    if (epubImageBytes != null) {
-                        readerView.setChapterImages(epubImageBytes);
-                    }
-                    readerView.applySettings();
-                    if (sp > 0 && sp < readerView.getTotalPages())
-                        readerView.goToPage(sp);
-                    updateStatusBar();
-                    updateProgressBar(readerView.getCurrentPage(), readerView.getTotalPages());
-                    updateProgressLabel();
-                    bookLoaded = true;
-                    if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
                 });
             } catch (final Exception e) {
+                DebugLog.error("Reader", "后台线程加载失败", e);
                 uiHandler.post(() -> {
                     if (isDestroyed) return;
                     Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
@@ -847,7 +860,9 @@ public class ReaderActivity extends Activity {
                                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                 );
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            DebugLog.error("UI", "applyImmersiveMode failed", e);
+        }
     }
 
     private void showLogDialog() {
@@ -910,7 +925,9 @@ public class ReaderActivity extends Activity {
                         statusBattery.setText(String.format(Locale.getDefault(), "%d%%",
                                 (int) ((level / (float) scale) * 100)));
                 }
-            } catch (Exception ignored) {}
+            } catch (Exception e) {
+                DebugLog.error("UI", "updateStatusBar battery failed", e);
+            }
         }
     }
 
@@ -956,7 +973,9 @@ public class ReaderActivity extends Activity {
                         prog.totalChapters = totalCh;
                         storage.saveProgress(prog);
                     }
-                } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    DebugLog.error("Progress", "saveProgress failed", e);
+                }
             }
         }).start();
     }
@@ -999,7 +1018,9 @@ public class ReaderActivity extends Activity {
             }
 
             storage.upsertBook(rec);
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            DebugLog.error("Progress", "persistBookRecord failed", e);
+        }
     }
 
     @Override protected void onActivityResult(int req, int res, Intent data) {

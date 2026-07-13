@@ -94,7 +94,9 @@ public class FilePickerActivity extends Activity {
                     }
                 }
             }
-        } catch (Exception e) { }
+        } catch (Exception e) {
+            android.util.Log.e("FilePicker", "getPathFromUri failed", e);
+        }
         return null;
     }
 }

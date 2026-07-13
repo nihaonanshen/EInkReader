@@ -130,13 +130,14 @@ public class DebugLog {
             if (overwrite && logFile.exists()) logFile.delete();
             fileReady = true;
         } catch (Exception e) {
-            // 内部日志静默，不抛异常
+            android.util.Log.e("EInkReader", "ensureFile primary failed", e);
             try {
                 logFile = new File(android.os.Environment.getDataDirectory(), "data/com.einkreader/cache/debug.txt");
                 File parent = logFile.getParentFile();
                 if (parent != null && !parent.exists()) parent.mkdirs();
                 fileReady = true;
             } catch (Exception e2) {
+                android.util.Log.e("EInkReader", "ensureFile fallback failed", e2);
                 fileReady = false;
             }
         }
@@ -158,7 +159,7 @@ public class DebugLog {
             fos.close();
             lastFlushedLength = data.length();
         } catch (Exception e) {
-            // 静默失败
+            android.util.Log.e("EInkReader", "flushToFile failed", e);
         }
     }
 }

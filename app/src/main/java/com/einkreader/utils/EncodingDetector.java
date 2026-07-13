@@ -41,6 +41,7 @@ public class EncodingDetector {
             if (actualRead <= 0) return "UTF-8";
             return detect(header, actualRead);
         } catch (IOException e) {
+            android.util.Log.w("EncDetector", "probeEncoding failed", e);
             return "UTF-8";
         } finally {
             if (is != null) try { is.close(); } catch (IOException e) { }
@@ -150,6 +151,7 @@ public class EncodingDetector {
             }
             return score;
         } catch (Exception e) {
+            android.util.Log.w("EncDetector", "scoreEncoding failed", e);
             return -1;
         }
     }

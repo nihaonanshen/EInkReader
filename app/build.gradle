@@ -10,8 +10,8 @@ android {
         applicationId "com.einkreader"
         minSdk 19
         targetSdk 35
-        versionCode 2
-        versionName "0.0.2"
+        versionCode 3
+        versionName "0.0.3"
         
         // Rust feature flag: Debug=true, Release=false (可在 gradle.properties 中覆盖)
         def enableRust = project.hasProperty('enableRust') ? project.enableRust.toBoolean() : false

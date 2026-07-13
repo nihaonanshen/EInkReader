@@ -54,6 +54,7 @@ public class EinkRefreshManager {
         try {
             sysfsAvailable = new java.io.File("/sys/class/graphics/fb0/epd_mode").exists();
         } catch (Exception e) {
+            android.util.Log.w("EinkRefresh", "sysfs detection failed", e);
             sysfsAvailable = false;
         }
 
