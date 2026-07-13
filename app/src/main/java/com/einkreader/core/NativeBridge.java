@@ -37,9 +37,9 @@ public class NativeBridge {
             System.loadLibrary("einkreader_core");
             sLibraryLoaded = true;
             Log.i(TAG, "Rust core library loaded successfully");
-        } catch (UnsatisfiedLinkError e) {
+        } catch (Throwable t) {
             sLibraryLoaded = false;
-            Log.w(TAG, "Rust core library not available, using Java fallback", e);
+            Log.w(TAG, "Rust core library not available, using Java fallback: " + t.getMessage());
         }
     }
 

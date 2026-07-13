@@ -45,7 +45,7 @@ public class EinkRefreshManager {
     private boolean sysfsAvailable = false;
 
     public EinkRefreshManager(Context context) {
-        this.context = context;
+        this.context = context.getApplicationContext();
     }
 
     public void initialize(RefreshCallback cb) {

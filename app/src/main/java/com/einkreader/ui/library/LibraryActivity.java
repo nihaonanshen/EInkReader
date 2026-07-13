@@ -260,7 +260,11 @@ public class LibraryActivity extends Activity {
 
             DebugLog.log("Lib", "扫描完成: " + books.size() + "本书 排序模式=" + currentSortMode);
         } finally {
-            adapter.notifyDataSetChanged();
+            runOnUiThread(new Runnable() {
+                @Override public void run() {
+                    if (adapter != null) adapter.notifyDataSetChanged();
+                }
+            });
             scanning = false;
         }
     }
@@ -272,6 +276,12 @@ public class LibraryActivity extends Activity {
 
     private void scanDir(File dir, java.util.HashSet<String> seenPaths,
                          java.util.HashMap<String, BookInfo> dbMap) {
+        scanDir(dir, seenPaths, dbMap, 0);
+    }
+
+    private void scanDir(File dir, java.util.HashSet<String> seenPaths,
+                         java.util.HashMap<String, BookInfo> dbMap, int depth) {
+        if (depth > MAX_SCAN_DEPTH) return;
         // 第一步：扫描当前目录下的所有书籍文件
         File[] files = dir.listFiles(new FileFilter() {
             @Override
@@ -317,7 +327,7 @@ public class LibraryActivity extends Activity {
                 String dirPath = subDir.getAbsolutePath();
                 if (!seenPaths.contains(dirPath)) {
                     seenPaths.add(dirPath);
-                    scanDir(subDir, seenPaths, dbMap);
+                    scanDir(subDir, seenPaths, dbMap, depth + 1);
                 }
             }
         }
@@ -384,9 +394,13 @@ public class LibraryActivity extends Activity {
     /**
      * 打开书籍
      */
-    private void openBook(File file) {
+    // 常量统一键名，防止拼写不一致
+public static final String EXTRA_FILE_PATH = "file_path";
+public static final String EXTRA_FILE_URI = "file_uri";
+
+private void openBook(File file) {
         Intent intent = new Intent(this, com.einkreader.ui.reader.ReaderActivity.class);
-        intent.putExtra("file_path", file.getAbsolutePath());
+        intent.putExtra(EXTRA_FILE_PATH, file.getAbsolutePath());
         startActivity(intent);
     }
 
@@ -394,8 +408,8 @@ public class LibraryActivity extends Activity {
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode == 1001 && resultCode == RESULT_OK && data != null) {
-            String filePath = data.getStringExtra("file_path");
-            String fileUri = data.getStringExtra("file_uri");
+            String filePath = data.getStringExtra(EXTRA_FILE_PATH);
+            String fileUri = data.getStringExtra(EXTRA_FILE_URI);
 
             if (filePath != null) {
                 File file = new File(filePath);
@@ -422,8 +436,8 @@ public class LibraryActivity extends Activity {
      */
     private void openBookByUri(String uri) {
         Intent intent = new Intent(this, com.einkreader.ui.reader.ReaderActivity.class);
-        intent.putExtra("file_uri", uri);
-        intent.putExtra("file_path", uri);  // 兼容旧代码
+        intent.putExtra(EXTRA_FILE_URI, uri);
+        intent.putExtra(EXTRA_FILE_PATH, uri);  // 兼容旧代码
         startActivity(intent);
     }
 

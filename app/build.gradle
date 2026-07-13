@@ -10,8 +10,8 @@ android {
         applicationId "com.einkreader"
         minSdk 19
         targetSdk 35
-        versionCode 3
-        versionName "0.0.3"
+        versionCode 4
+        versionName "0.0.4"
         
         // Rust feature flag: Debug=true, Release=false (可在 gradle.properties 中覆盖)
         def enableRust = project.hasProperty('enableRust') ? project.enableRust.toBoolean() : false
@@ -20,10 +20,16 @@ android {
 
     signingConfigs {
         release {
-            storeFile file("einkreader.jks")
-            storePassword "einkreader123"
-            keyAlias "einkreader"
-            keyPassword "einkreader123"
+            // ★ 签名信息从 local.properties 读取（不提交到版本控制）
+            def props = new Properties()
+            def propFile = rootProject.file('local.properties')
+            if (propFile.exists()) {
+                props.load(new FileInputStream(propFile))
+            }
+            storeFile file(props.getProperty('storeFile', 'einkreader.jks'))
+            storePassword props.getProperty('storePassword', '')
+            keyAlias props.getProperty('keyAlias', 'einkreader')
+            keyPassword props.getProperty('keyPassword', '')
         }
     }
 

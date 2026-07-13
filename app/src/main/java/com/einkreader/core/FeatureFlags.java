@@ -13,16 +13,28 @@ public class FeatureFlags {
     public static final boolean ENABLE_RUST = BuildConfig.ENABLE_RUST;
 
     // Rust 编码检测
-    public static volatile boolean USE_RUST_ENCODING_DETECTOR = ENABLE_RUST;
+    private static volatile boolean sUseRustEncodingDetector = ENABLE_RUST;
 
     // Rust TXT 解析器（需 NativeBridge 库加载成功才生效）
-    public static volatile boolean USE_RUST_TXT_PARSER = ENABLE_RUST;
+    private static volatile boolean sUseRustTxtParser = ENABLE_RUST;
 
     // Rust EPUB 解析器（Phase 3 实现）
-    public static volatile boolean USE_RUST_EPUB_PARSER = ENABLE_RUST;
+    private static volatile boolean sUseRustEpubParser = ENABLE_RUST;
 
     // Rust 页面排版引擎（Phase 4 实现）
-    public static volatile boolean USE_RUST_LAYOUT = ENABLE_RUST;
+    private static volatile boolean sUseRustLayout = ENABLE_RUST;
+
+    public static boolean isUseRustEncodingDetector() { return sUseRustEncodingDetector; }
+    public static void setUseRustEncodingDetector(boolean v) { sUseRustEncodingDetector = v; }
+
+    public static boolean isUseRustTxtParser() { return sUseRustTxtParser; }
+    public static void setUseRustTxtParser(boolean v) { sUseRustTxtParser = v; }
+
+    public static boolean isUseRustEpubParser() { return sUseRustEpubParser; }
+    public static void setUseRustEpubParser(boolean v) { sUseRustEpubParser = v; }
+
+    public static boolean isUseRustLayout() { return sUseRustLayout; }
+    public static void setUseRustLayout(boolean v) { sUseRustLayout = v; }
 
     /**
      * 检查 Rust 实现是否可用
@@ -35,13 +47,13 @@ public class FeatureFlags {
      * 是否使用 Rust TXT 解析器
      */
     public static boolean useRustTxtParser() {
-        return USE_RUST_TXT_PARSER && isRustAvailable();
+        return sUseRustTxtParser && isRustAvailable();
     }
 
     /**
      * 是否使用 Rust EPUB 解析器
      */
     public static boolean useRustEpubParser() {
-        return USE_RUST_EPUB_PARSER && isRustAvailable();
+        return sUseRustEpubParser && isRustAvailable();
     }
 }

@@ -22,7 +22,7 @@ public class AboutActivity extends Activity {
         root.setPadding(20, 30, 20, 20);
 
         addText(root, "墨水屏阅读器", 24, true, 0, 6);
-        addText(root, "版本 0.0.1", 16, false, 0, 4);
+        addText(root, "版本 " + com.einkreader.BuildConfig.VERSION_NAME, 16, false, 0, 4);
         addText(root, "", 16, false, 0, 6);
 
         addText(root, "项目说明", 18, true, 0, 4);

@@ -6,6 +6,7 @@ import com.einkreader.core.parser.EpubParser;
 import com.einkreader.core.parser.TxtParser;
 import com.einkreader.core.storage.BookStorage;
 import com.einkreader.core.storage.DatabaseHelper;
+import com.einkreader.ui.reader.DebugLog;
 
 /**
  * 应用入口 —— APP 启动时最先运行这里
@@ -22,6 +23,7 @@ public class EInkReaderApp extends Application {
         // 初始化解析器的缓存目录（这样第二次打开同一本书就快很多）
         TxtParser.initCacheDir(getCacheDir());
         EpubParser.initCacheDir(getCacheDir());
+        DebugLog.initCacheDir(getCacheDir());
 
         // 初始化 SQLite 存储
         DatabaseHelper db = new DatabaseHelper(this);

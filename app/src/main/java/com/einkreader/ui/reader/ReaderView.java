@@ -125,6 +125,9 @@ public class ReaderView extends View {
 
     // ==================== 监听器接口 ====================
 
+    /** 当异步布局完成后，跳转到此页面，-1 表示不跳转 */
+    private int mPendingTargetPage = -1;
+
     public interface OnPageChangeListener {
         void onPageChanged(int pageIndex, int totalPages);
         void onChapterChanged(int chapterIndex);
@@ -142,12 +145,6 @@ public class ReaderView extends View {
 
     public ReaderView(Context context, AttributeSet attrs) {
         super(context, attrs);
-        bitmapCache = new LruCache<String, Bitmap>(MAX_BITMAP_CACHE_BYTES) {
-            @Override
-            protected int sizeOf(String key, Bitmap bitmap) {
-                return bitmap.getByteCount();
-            }
-        };
         init();
     }
 
@@ -178,6 +175,13 @@ public class ReaderView extends View {
         layoutThread = new HandlerThread("layout-bg");
         layoutThread.start();
         backgroundHandler = new Handler(layoutThread.getLooper());
+
+        bitmapCache = new LruCache<String, Bitmap>(MAX_BITMAP_CACHE_BYTES) {
+            @Override
+            protected int sizeOf(String key, Bitmap bitmap) {
+                return bitmap.getByteCount();
+            }
+        };
     }
 
     // ==================== 公开设置方法 ====================
@@ -234,14 +238,24 @@ public class ReaderView extends View {
 
     // ==================== 设置篇章 ====================
 
+    /** 设置布局完成后要跳转的目标页，-1 表示不跳转（用于翻到上一章末尾） */
+    public void setPendingTargetPage(int page) {
+        this.mPendingTargetPage = page;
+    }
+
     public void setChapter(Chapter chapter) {
         this.currentChapter = chapter;
         this.currentPage = 0;
+        // ★ 立即清空旧页面数据，防止异步分页完成前绘制旧章内容
+        pages.clear();
+        totalPages = 0;
         for (Bitmap bmp : bitmapCache.snapshot().values()) {
             if (bmp != null && !bmp.isRecycled()) bmp.recycle();
         }
         bitmapCache.evictAll();
         scheduleLayout();
+        // 触发立即重绘，onDraw 会显示"排版中..."，而不是旧章内容
+        invalidate();
     }
 
     // ==================== 后台分页调度 ====================
@@ -395,7 +409,7 @@ public class ReaderView extends View {
 
             float paraTS = ts, paraLS = ls, paraExtra = paraSpacingPx;
             boolean centered = false, bold = false;
-            float firstIndent = indentEnabled ? paraTS * dens : 0;
+            float firstIndent = indentEnabled ? paraTS * dens * 2 : 0;
 
             switch (paraType) {
                 case Chapter.PARA_H1:
@@ -545,24 +559,36 @@ public class ReaderView extends View {
                     totalPages = 1;
                 }
 
-                // 指纹恢复
-                if (fp != null) {
-                    int found = -1;
-                    for (int i = 0; i < pages.size(); i++) {
-                        Page p = pages.get(i);
-                        if (p != null && !p.lines.isEmpty()) {
-                            String t = p.lines.get(0).text;
-                            if (t != null && t.startsWith(fp)) {
-                                found = i;
-                                break;
+                // 处理待跳转的目标页（优先于指纹恢复）
+                if (mPendingTargetPage >= 0 && mPendingTargetPage < totalPages) {
+                    currentPage = mPendingTargetPage;
+                    mPendingTargetPage = -1;
+                } else if (mPendingTargetPage == Integer.MAX_VALUE) {
+                    // 特殊值：跳到最后一页（用于回到上一章末尾）
+                    currentPage = Math.max(0, totalPages - 1);
+                    mPendingTargetPage = -1;
+                } else {
+                    mPendingTargetPage = -1;
+                    // 指纹恢复
+                    if (fp != null) {
+                        int found = -1;
+                        for (int i = 0; i < pages.size(); i++) {
+                            Page p = pages.get(i);
+                            if (p != null && !p.lines.isEmpty()) {
+                                String t = p.lines.get(0).text;
+                                if (t != null && t.startsWith(fp)) {
+                                    found = i;
+                                    break;
+                                }
                             }
                         }
+                        if (found >= 0) {
+                            currentPage = found;
+                        }
                     }
-                    if (found >= 0) {
-                        currentPage = found;
-                    } else if (currentPage >= totalPages) {
-                        currentPage = Math.max(0, totalPages - 1);
-                    }
+                }
+                if (currentPage >= totalPages) {
+                    currentPage = Math.max(0, totalPages - 1);
                 }
 
                 // ★ 图片解码已移至翻页方法，但首次布局后仍需解码第一页

@@ -1,6 +1,6 @@
 package com.einkreader.ui.reader;
 
-import android.os.Environment;
+import android.content.Context;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -17,7 +17,7 @@ import java.util.Locale;
  *   DebugLog.error("TAG", "message"); // 错误信息（会带 ERROR 前缀）
  *
  * 日志文件路径：
- *   /sdcard/Download/EInkReader_debug.txt
+ *   应用私有缓存目录 / EInkReader_debug.txt
  *
  * 清理：
  *   DebugLog.clear();
@@ -25,6 +25,7 @@ import java.util.Locale;
  * 注意：正式版发布时需移除所有 DebugLog.log 调用。
  */
 public class DebugLog {
+    private static final Object sLock = new Object();
     private static StringBuilder log = new StringBuilder();
     private static ThreadLocal<SimpleDateFormat> sdf = new ThreadLocal<SimpleDateFormat>() {
         @Override
@@ -40,56 +41,78 @@ public class DebugLog {
     };
     private static boolean fileReady = false;
     private static File logFile = null;
+    private static File sCacheDir = null;
     private static final int MAX_LOG_LEN = 50000;
     private static int lastFlushedLength = 0;
 
-    /** 开发阶段开关：true=开启日志，false=静默（正式版时改为 false） */
-    public static boolean ENABLED = true;
+    /** 开发阶段开关：Debug 模式开启，Release 自动关闭 */
+    public static boolean ENABLED = com.einkreader.BuildConfig.DEBUG;
+
+    /** 设置缓存目录（在 Application.onCreate 中调用） */
+    public static void initCacheDir(File cacheDir) {
+        sCacheDir = cacheDir;
+    }
 
     /** 初始化时调用一次，写入启动时间戳 */
     public static void init() {
-        log.setLength(0);
-        ensureFile(true);
-        logLine("===== EInkReader Debug Session " + dateFormat.get().format(new Date()) + " =====");
-        logLine("Device: " + android.os.Build.MODEL + ", SDK=" + android.os.Build.VERSION.SDK_INT);
-        logLine("Density: " + android.content.res.Resources.getSystem().getDisplayMetrics().densityDpi + "dpi");
-        flushToFile();
+        synchronized (sLock) {
+            log.setLength(0);
+            ensureFile(true);
+            logLine("===== EInkReader Debug Session " + dateFormat.get().format(new Date()) + " =====");
+            logLine("Device: " + android.os.Build.MODEL + ", SDK=" + android.os.Build.VERSION.SDK_INT);
+            logLine("Density: " + android.content.res.Resources.getSystem().getDisplayMetrics().densityDpi + "dpi");
+            // init 必须强制刷入文件，不受批量计数器限制
+            sFlushCounter = 99;
+            flushToFile();
+        }
     }
 
     public static void log(String tag, String msg) {
         if (!ENABLED) return;
-        logLine(formatLine(tag, msg));
-        flushToFile();
+        synchronized (sLock) {
+            logLine(formatLine(tag, msg));
+            flushToFile();
+        }
     }
 
     public static void error(String tag, String msg) {
         if (!ENABLED) return;
-        logLine(formatLine("ERROR", "[" + tag + "] " + msg));
-        flushToFile();
+        synchronized (sLock) {
+            logLine(formatLine("ERROR", "[" + tag + "] " + msg));
+            // error 级别强制刷入
+            sFlushCounter = 99;
+            flushToFile();
+        }
     }
 
     public static void error(String tag, String msg, Throwable t) {
         if (!ENABLED) return;
-        StringBuilder sb = new StringBuilder();
-        sb.append(formatLine("ERROR", "[" + tag + "] " + msg));
-        if (t != null) {
-            sb.append("\n  Exception: ").append(t.getClass().getSimpleName()).append(": ").append(t.getMessage());
-            StackTraceElement[] stack = t.getStackTrace();
-            if (stack != null) {
-                int lines = 0;
-                for (StackTraceElement e : stack) {
-                    if (lines++ > 3) break;
-                    sb.append("\n    at ").append(e.getClassName()).append('.').append(e.getMethodName())
-                            .append('(').append(e.getFileName()).append(':').append(e.getLineNumber()).append(')');
+        synchronized (sLock) {
+            StringBuilder sb = new StringBuilder();
+            sb.append(formatLine("ERROR", "[" + tag + "] " + msg));
+            if (t != null) {
+                sb.append("\n  Exception: ").append(t.getClass().getSimpleName()).append(": ").append(t.getMessage());
+                StackTraceElement[] stack = t.getStackTrace();
+                if (stack != null) {
+                    int lines = 0;
+                    for (StackTraceElement e : stack) {
+                        if (lines++ > 3) break;
+                        sb.append("\n    at ").append(e.getClassName()).append('.').append(e.getMethodName())
+                                .append('(').append(e.getFileName()).append(':').append(e.getLineNumber()).append(')');
+                    }
                 }
             }
+            logLine(sb.toString());
+            // error 级别强制刷入
+            sFlushCounter = 99;
+            flushToFile();
         }
-        logLine(sb.toString());
-        flushToFile();
     }
 
     public static String getLog() {
-        return log.toString();
+        synchronized (sLock) {
+            return log.toString();
+        }
     }
 
     public static String getLogFilePath() {
@@ -98,8 +121,10 @@ public class DebugLog {
     }
 
     public static void clear() {
-        log.setLength(0);
-        ensureFile(true);
+        synchronized (sLock) {
+            log.setLength(0);
+            ensureFile(true);
+        }
     }
 
     // ============ 内部方法 ============
@@ -124,29 +149,29 @@ public class DebugLog {
     private static void ensureFile(boolean overwrite) {
         if (fileReady && logFile != null && logFile.exists() && !overwrite) return;
         try {
-            File dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS);
+            File dir = sCacheDir != null ? sCacheDir : new File(android.os.Environment.getDataDirectory(), "data/com.einkreader/cache");
             if (!dir.exists()) dir.mkdirs();
             logFile = new File(dir, "EInkReader_debug.txt");
             if (overwrite && logFile.exists()) logFile.delete();
             fileReady = true;
         } catch (Exception e) {
-            android.util.Log.e("EInkReader", "ensureFile primary failed", e);
-            try {
-                logFile = new File(android.os.Environment.getDataDirectory(), "data/com.einkreader/cache/debug.txt");
-                File parent = logFile.getParentFile();
-                if (parent != null && !parent.exists()) parent.mkdirs();
-                fileReady = true;
-            } catch (Exception e2) {
-                android.util.Log.e("EInkReader", "ensureFile fallback failed", e2);
-                fileReady = false;
-            }
+            android.util.Log.e("EInkReader", "ensureFile failed", e);
+            fileReady = false;
         }
     }
+
+    // == 批量 flush 计数器，避免高频 I/O ==
+    private static int sFlushCounter = 0;
 
     private static void flushToFile() {
         if (!ENABLED) return;
         if (!fileReady) ensureFile(false);
         if (logFile == null) return;
+
+        // 累积最多 5 条或 1000 字节再写入，减少 I/O 压力
+        sFlushCounter++;
+        if (sFlushCounter < 5 && log.length() - lastFlushedLength < 1000) return;
+        sFlushCounter = 0;
 
         try {
             String data = log.toString();

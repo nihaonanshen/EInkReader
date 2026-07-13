@@ -198,16 +198,15 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
     public synchronized void deleteBook(String fileKey) {
         if (fileKey == null) return;
         progressCache.remove(fileKey);
-        SQLiteDatabase db = getWritableDatabase();
         try {
+            SQLiteDatabase db = getWritableDatabase();
             db.beginTransaction();
             db.delete(TABLE_BOOKS, KEY_FILE_KEY + "=?", new String[]{fileKey});
             db.delete(TABLE_PROGRESS, KEY_FILE_KEY + "=?", new String[]{fileKey});
             db.setTransactionSuccessful();
+            db.endTransaction();
         } catch (Exception e) {
             DebugLog.log(TAG, "deleteBook failed: " + e.getMessage());
-        } finally {
-            db.endTransaction();
         }
     }
 

@@ -110,17 +110,19 @@ public class TxtParser {
             chapters = new ArrayList<Chapter>();
         }
 
-        /** ★ 获取全文，仅在首次构建 */
+        /** ★ 获取全文，仅在首次构建（线程安全） */
         public String getFullContent() {
-            if (!fullContentBuilt && fullContent == null && chapters != null) {
-                StringBuilder sb = new StringBuilder();
-                for (Chapter c : chapters) {
-                    if (c.getContent() != null) sb.append(c.getContent());
+            synchronized (this) {
+                if (!fullContentBuilt && fullContent == null && chapters != null) {
+                    StringBuilder sb = new StringBuilder();
+                    for (Chapter c : chapters) {
+                        if (c.getContent() != null) sb.append(c.getContent());
+                    }
+                    fullContent = sb.toString();
+                    fullContentBuilt = true;
                 }
-                fullContent = sb.toString();
-                fullContentBuilt = true;
+                return fullContent;
             }
-            return fullContent;
         }
     }
 
@@ -570,6 +572,11 @@ public class TxtParser {
                 int lineStart = Integer.parseInt(reader.readLine());
                 int lineEnd = Integer.parseInt(reader.readLine());
                 int contentLen = Integer.parseInt(reader.readLine());
+                // ★ 限制缓存文件解析大小，防止恶意/损坏缓存导致 OOM
+                if (contentLen > 500000) {
+                    Log.w(TAG, "readCache: contentLen=" + contentLen + " > 500KB, 跳过缓存");
+                    return null;
+                }
                 char[] buf = new char[contentLen];
                 int read = 0;
                 while (read < contentLen) {

@@ -101,9 +101,84 @@ app/src/main/java/com/einkreader/
 
 ## 最近更新
 
-**2026-07-05 (v0.0.3)**：扫描系统重构 + EPUB 图片修复 + 7.8 寸适配 + 性能优化
+**2026-07-13 (v0.0.5)** – 全面代码审查修复 + 兼容性 + 翻页体验优化
+- keystore 密码迁移至 `local.properties`，`FeatureFlags` 字段最小化权限。
+- `DebugLog` 线程安全、Release 自动关闭。
+- UI 线程违规修复（`LibraryActivity` 包装 `runOnUiThread`），`ReaderView` 初始化安全。
+- `EpubParser` 兼容 API‑19（`get`+`putIfAbsent`），`DatabaseHelper` 异常安全。
+- `TxtParser` 添加 500 KB 单章节上限、防 OOM；`scanDir` 深度限制为 4。
+- 翻页闪章修复、跨章节跳转、首行缩进 2 字符、`AboutActivity` 使用 `BuildConfig.VERSION_NAME`。
 
-### v0.0.3 更新说明
+**2026-07-05 (v0.0.4)** – 书架扫描重构、EPUB 图片渲染、布局后台化、性能提升
+- `LibraryActivity` 支持递归扫描外置 SD 卡路径（/storage/emulated/0/epub、/mnt/external_sd/books），使用 `scanning` 标志防止无限刷新。
+- `EpubParser`、`ReaderView`、`ReaderActivity`、`NativeBridge` 中 `images` 改为 `Map<String,byte[]>`，解决大图黑屏/白页。
+- `ReaderView.layoutPages()` 移至 `HandlerThread` 异步执行，主线程不阻塞。
+- 换行算法 O(n) 优化，章节指纹阈值提升至 ≥4，TOC 缓存 `tocLayoutValid`，默认字号 26→30 sp，目录字号随屏幕动态。
+- 阅读设置新增首行缩进开关；编码检测采样 8 KB + 缓存 v3。
+
+**2026-06-30 (v0.0.3)** – 代码质量与 UI 全面升级
+- 修复 `EpubParser` 目录识别、`TxtParser` 缓存健壮性、Rust 解析器链路优化、`ReaderView` 交互及防抖。
+- 新增 `BookStorage` 接口 + `DatabaseHelper` 持久化实现（SQLite+SharedPreferences 双保险）。
+- 阅读页沉浸全屏、底部 Tab 菜单（目录、书签、进度、设置、全刷），书库列表视觉升级，墨水屏高对比度 SeekBar 资源。
+
+**2026-06-29 (v0.0.2)** – 基础功能实现
+- 支持 TXT/EPUB 自动编码检测（GBK/UTF‑8/Big5/GB18030），智能目录（中文章节、英文 Chapter），EPUB 图片渲染。
+- 字体设置、自定义字体、夜间模式、局部/定时刷新、书架管理、阅读标签、最近阅读、阅读统计、进度持久化、沉浸全屏、快捷 Tab 菜单。
+
+**2026-06-28 (v0.0.1)** – 项目初始化
+- 项目结构、Gradle 配置、基础 UI 框架搭建。
+
+
+**2026-07-13 (v0.0.5)**：全面代码审查修复 + 兼容性 + 翻页体验优化
+
+### v0.0.5 更新说明
+
+#### 🔐 安全修复
+| 改动 | 说明 |
+|------|------|
+| **签名密钥迁移** | keystore 密码从 `build.gradle` 移至 `local.properties`，杜绝密钥泄露风险 |
+| **FeatureFlags 最小权限** | 所有 `public volatile` 字段改为 `private` + getter/setter |
+
+#### 🐛 阻塞问题修复
+| 改动 | 文件 | 说明 |
+|------|------|------|
+| **签名硬编码** | `build.gradle` | 密钥密码不再提交到版本控制 |
+| **DebugLog 兼容性 & 线程安全** | `DebugLog.java` | 改用 `getCacheDir()`，加 `synchronized` 保护 |
+| **UI 线程违规** | `LibraryActivity.java` | `notifyDataSetChanged()` 用 `runOnUiThread` 包装 |
+| **bitmapCache 空指针** | `ReaderView.java` | 初始化移至 `init()` 统一处理 |
+| **computeIfAbsent 不兼容** | `EpubParser.java` | 替换为 `get` + `putIfAbsent`（API 19+ 兼容） |
+
+#### 📱 性能与兼容性（Android 4.4+）
+| 改动 | 说明 |
+|------|------|
+| **EinkRefreshManager 泄漏** | 改用 `getApplicationContext()` |
+| **DatabaseHelper 异常安全** | `getWritableDatabase()` 移入 try 块 |
+| **TxtParser OOM 防护** | 缓存解析添加 500KB 上限 |
+| **scanDir 递归深度** | `MAX_SCAN_DEPTH=4` 现在真正生效 |
+| **DebugLog 批量 I/O** | 缓冲写入，减少文件 I/O 压力 |
+| **DebugLog 自动开关** | Release 构建自动关闭日志 |
+
+#### 📖 阅读体验优化
+| 改动 | 说明 |
+|------|------|
+| **翻页闪章修复** | `setChapter()` 立即清空 `pages`，先显示"排版中..."再刷新章 |
+| **上一章末尾跳转** | 新增 `setPendingTargetPage()` 机制 |
+| **移除了冗余 `goToPage`** | 由布局回调统一处理页面跳转 |
+| **首行缩进 2 字符** | `firstIndent` 改为 2 个汉字宽度 |
+
+#### ⚪ 其他优化
+| 改动 | 说明 |
+|------|------|
+| **AboutActivity 版本号** | 硬编码 `0.0.1` → `BuildConfig.VERSION_NAME` |
+| **TxtParser 线程安全** | `getFullContent()` 加 `synchronized` |
+| **wrapText 性能** | 减少临时 String 创建 |
+| **DebugLog 强制刷入** | 错误日志不受批量计数器限制 |
+
+---
+
+**2026-07-05 (v0.0.4)**：扫描系统重构 + EPUB 图片修复 + 7.8 寸适配 + 性能优化
+
+### v0.0.4 更新说明
 
 | 分类 | 改动 | 文件 |
 |------|------|------|
