@@ -223,18 +223,18 @@ public class ReaderActivity extends Activity {
         progressLabel = (TextView) findViewById(R.id.progress_label);
 
         progressSeekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
-            @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-                if (fromUser && readerView != null) {
-                    int total = readerView.getTotalPages();
-                    if (total > 0) {
-                        int targetPage = (int) (progress * (total - 1) / 1000f);
-                        if (targetPage >= 0 && targetPage < total) {
-                            readerView.goToPage(targetPage);
-                            updateProgressLabel();
+                    @Override public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                        if (fromUser && readerView != null) {
+                            int total = readerView.getTotalPages();
+                            if (total > 0) {
+                                int targetPage = (int) (progress * (total - 1) / 100f);
+                                if (targetPage >= 0 && targetPage < total) {
+                                    readerView.goToPage(targetPage);
+                                    updateProgressLabel();
+                                }
+                            }
                         }
                     }
-                }
-            }
             @Override public void onStartTrackingTouch(SeekBar seekBar) {}
             @Override public void onStopTrackingTouch(SeekBar seekBar) {}
         });
@@ -832,14 +832,14 @@ public class ReaderActivity extends Activity {
     }
 
     private void updateProgressBar(int currentPage, int totalPages) {
-        if (progressSeekBar == null) return;
-        int progress = 0;
-        if (totalPages > 0) {
-            progress = (int) ((currentPage * 1000f) / Math.max(1, totalPages - 1));
-            if (progress > 1000) progress = 1000;
+            if (progressSeekBar == null) return;
+            int progress = 0;
+            if (totalPages > 0) {
+                progress = (int) ((currentPage * 100f) / Math.max(1, totalPages - 1));
+                if (progress > 100) progress = 100;
+            }
+            progressSeekBar.setProgress(progress);
         }
-        progressSeekBar.setProgress(progress);
-    }
 
     private void updateProgressLabel() {
         if (progressLabel != null && readerView != null) {
