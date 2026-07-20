@@ -34,11 +34,14 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="text/plain" />
-                <data android:mimeType="application/epub+zip" />
-            </intent-filter>
+                            <action android:name="android.intent.action.VIEW" />
+                            <category android:name="android.intent.category.DEFAULT" />
+                            <category android:name="android.intent.category.BROWSABLE" />
+                            <data android:scheme="einkreader" android:host="*" />
+                            <data android:scheme="https" android:host="example.com" />
+                            <data android:mimeType="text/plain" />
+                            <data android:mimeType="application/epub+zip" />
+                        </intent-filter>
         </activity>
 
         <!-- 阅读器页面 -->

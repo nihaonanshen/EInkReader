@@ -23,21 +23,17 @@ import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import com.einkreader.EInkReaderApp;
 import com.einkreader.R;
-import com.einkreader.core.FeatureFlags;
-import com.einkreader.core.NativeBridge;
 import com.einkreader.core.model.Chapter;
-import com.einkreader.core.parser.EpubParser;
-import com.einkreader.core.parser.TxtParser;
 import com.einkreader.core.refresh.EinkRefreshManager;
-import com.einkreader.core.storage.BookStorage;
+import com.einkreader.di.ServiceLocator;
+import com.einkreader.repository.BookResult;
+import com.einkreader.repository.ReaderRepository;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -460,12 +456,7 @@ public class ReaderActivity extends Activity {
     private void loadBookmarks() {
         List<String> list = new ArrayList<>();
         try {
-            SharedPreferences bm = getSharedPreferences("bookmarks_" + fileKey, MODE_PRIVATE);
-            java.util.Set<String> keys = bm.getAll().keySet();
-            for (String k : keys) {
-                String v = bm.getString(k, "");
-                list.add(k + " : " + v);
-            }
+            list = ServiceLocator.getReaderRepository().loadBookmarks(fileKey);
         } catch (Exception e) {
             DebugLog.error("Bookmark", "loadBookmarks failed", e);
         }
@@ -501,21 +492,11 @@ public class ReaderActivity extends Activity {
     }
 
     private void jumpToBookmark(int idx) {
-        if (chapters == null) return;
+        if (chapters == null || fileKey == null) return;
         try {
-            SharedPreferences bm = getSharedPreferences("bookmarks_" + fileKey, MODE_PRIVATE);
-            int i = 0;
-            for (String k : bm.getAll().keySet()) {
-                try {
-                    if (i == idx) {
-                        String chapterKey = k.contains("_") ? k.split("_")[0] : k;
-                        int ch = Integer.parseInt(chapterKey);
-                        switchChapterTo(ch);
-                        return;
-                    }
-                    i++;
-                } catch (NumberFormatException ignore) {
-                }
+            int ch = ServiceLocator.getReaderRepository().jumpToBookmark(fileKey, idx, chapters.size());
+            if (ch >= 0 && ch < chapters.size()) {
+                switchChapterTo(ch);
             }
         } catch (Exception e) {
             DebugLog.error("Bookmark", "jumpToBookmark failed", e);
@@ -523,17 +504,15 @@ public class ReaderActivity extends Activity {
     }
 
     private void addBookmark() {
-        if (fileKey == null) return;
+        if (fileKey == null || readerView == null) return;
         try {
-            SharedPreferences bm = getSharedPreferences("bookmarks_" + fileKey, MODE_PRIVATE);
             String title = "";
             if (chapters != null && currentChapterIndex < chapters.size()) {
                 Chapter c = chapters.get(currentChapterIndex);
                 title = c.getTitle() != null ? c.getTitle() : ("第" + (currentChapterIndex + 1) + "章");
             }
-            title += " P" + (readerView != null ? readerView.getCurrentPage() : 0);
-            bm.edit().putString(String.valueOf(currentChapterIndex) + "_" +
-                    (readerView != null ? readerView.getCurrentPage() : 0), title).apply();
+            ServiceLocator.getReaderRepository().addBookmark(
+                    fileKey, currentChapterIndex, readerView.getCurrentPage(), title);
             Toast.makeText(this, "已加书签", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
             DebugLog.error("Bookmark", "addBookmark failed", e);
@@ -592,184 +571,105 @@ public class ReaderActivity extends Activity {
             bookLoaded = false;
             epubImageBytes = null; // ★ 重置图片数据，防止跨书泄露
             if (loadingFilename != null) {
-            String name = filePath != null ? filePath : "";
-            int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-            loadingFilename.setText(slash >= 0 ? name.substring(slash + 1) : name);
-        }
-        if (loadingOverlay != null) {
-            loadingOverlay.setVisibility(View.VISIBLE);
-            // 解析超时兜底——30秒后自动隐藏 loading，防止永久白屏
-            uiHandler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    if (isDestroyed) return;
-                    if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
-                        loadingOverlay.setVisibility(View.GONE);
-                        Toast.makeText(ReaderActivity.this, "加载超时", Toast.LENGTH_LONG).show();
-                    }
-                }
-            }, LOADING_TIMEOUT_MS);
-        }
-        filePath = getIntent().getStringExtra("file_path");
-        String fileUri = getIntent().getStringExtra("file_uri");
-        if ((filePath == null || filePath.isEmpty()) && fileUri == null) {
-            DebugLog.error("Load", "书籍路径为空");
-            Toast.makeText(this, "书籍路径为空", Toast.LENGTH_SHORT).show();
-            finish();
-            return;
-        }
-        final boolean isUri = (fileUri != null && fileUri.startsWith("content://"));
-        if (isUri) filePath = fileUri;
-        final String fp = filePath, fu = (fileUri != null) ? fileUri : filePath;
-        final boolean isContent = isUri;
-
-        if (!isContent) {
-            File f = new File(fp);
-            if (f.exists()) {
-                fileKey = f.getName() + "_" + f.length() + "_" + f.lastModified();
-            } else {
-                fileKey = fp.hashCode() + "";
+                String name = filePath != null ? filePath : "";
+                int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+                loadingFilename.setText(slash >= 0 ? name.substring(slash + 1) : name);
             }
-        } else {
-            fileKey = fu.hashCode() + "";
-        }
-
-        new Thread(() -> {
-            DebugLog.log("Parse", "开始解析: " + fp + ", isEpub=" + (fp != null && fp.toLowerCase().contains(".epub")) + ", isTxt=" + (fp != null && fp.toLowerCase().contains(".txt")));
-            try {
-                List<Chapter> pc;
-                String nl = fp != null ? fp.toLowerCase() : "";
-                boolean isEpub = nl.contains(".epub") || fu.contains(".epub");
-                boolean isTxt  = nl.contains(".txt")  || fu.contains(".txt");
-
-                if (isEpub) {
-                    if (isContent) {
-                        java.io.InputStream is = getContentResolver().openInputStream(android.net.Uri.parse(fu));
-                        if (is == null) { showToastOnUi("无法读取"); return; }
-                        File tf = new File(getCacheDir(), "t" + System.currentTimeMillis() + ".epub");
-                        java.io.FileOutputStream fos = new java.io.FileOutputStream(tf);
-                        byte[] buf = new byte[8192]; int n;
-                        while ((n = is.read(buf)) != -1) fos.write(buf, 0, n);
-                        fos.close(); is.close();
-                        EpubParser.EpubResult r = (FeatureFlags.useRustEpubParser())
-                                ? NativeBridge.parseEpub(tf)
-                                : EpubParser.parse(tf);
-                        DebugLog.log("Parse", "EPUB解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
-                        pc = r != null ? r.chapters : null;
-                        if (r != null) {
-                            epubImageBytes = r.images;
+            if (loadingOverlay != null) {
+                loadingOverlay.setVisibility(View.VISIBLE);
+                // 解析超时兜底——30秒后自动隐藏 loading，防止永久白屏
+                uiHandler.postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (isDestroyed) return;
+                        if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
+                            loadingOverlay.setVisibility(View.GONE);
+                            Toast.makeText(ReaderActivity.this, "加载超时", Toast.LENGTH_LONG).show();
                         }
-                        tf.delete();
-                    } else {
-                                        EpubParser.EpubResult r = (FeatureFlags.useRustEpubParser())
-                                                ? NativeBridge.parseEpub(new File(fp))
-                                                : EpubParser.parse(new File(fp));
-                                        DebugLog.log("Parse", "EPUB解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
-                                        pc = r != null ? r.chapters : null;
-                                        if (r != null) {
-                                            epubImageBytes = r.images;
-                                        }
-                                    }
-                                } else if (isTxt) {
-                    if (isContent) {
-                        java.io.InputStream is = getContentResolver().openInputStream(android.net.Uri.parse(fu));
-                        if (is == null) { showToastOnUi("无法读取"); return; }
-                        File tf = new File(getCacheDir(), "t" + System.currentTimeMillis() + ".txt");
-                        java.io.FileOutputStream fos = new java.io.FileOutputStream(tf);
-                        byte[] buf = new byte[8192]; int n;
-                        while ((n = is.read(buf)) != -1) fos.write(buf, 0, n);
-                        fos.close(); is.close();
-                        TxtParser.ParseResult r = (FeatureFlags.useRustTxtParser())
-                                ? NativeBridge.parseTxt(tf)
-                                : TxtParser.parse(tf);
-                        DebugLog.log("Parse", "TXT解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
-                        pc = r != null ? r.chapters : null;
-                        tf.delete();
-                    } else {
-                        TxtParser.ParseResult r = (FeatureFlags.useRustTxtParser())
-                                ? NativeBridge.parseTxt(new File(fp))
-                                : TxtParser.parse(new File(fp));
-                        DebugLog.log("Parse", "TXT解析完成: chapters=" + (r != null && r.chapters != null ? r.chapters.size() : 0));
-                        pc = r != null ? r.chapters : null;
                     }
-                } else {
+                }, LOADING_TIMEOUT_MS);
+            }
+            filePath = getIntent().getStringExtra("file_path");
+            String fileUri = getIntent().getStringExtra("file_uri");
+            if ((filePath == null || filePath.isEmpty()) && fileUri == null) {
+                DebugLog.error("Load", "书籍路径为空");
+                Toast.makeText(this, "书籍路径为空", Toast.LENGTH_SHORT).show();
+                finish();
+                return;
+            }
+
+            final String fp = filePath;
+            final String fu = (fileUri != null) ? fileUri : filePath;
+
+            // ★ 后台线程执行解析 —— 使用 ReaderRepository 解耦所有业务逻辑
+            new Thread(() -> {
+                try {
+                    ReaderRepository repo = ServiceLocator.getReaderRepository();
+                    BookResult result = repo.loadBook(fp, fu);
+
+                    if (result == null || !result.isValid()) {
+                        showToastOnUi("解析失败");
+                        return;
+                    }
+
+                    final List<Chapter> fch = result.chapters;
+
+                    uiHandler.post(() -> {
+                        try {
+                            if (isDestroyed) return;
+                            if (fch == null || fch.isEmpty()) {
+                                DebugLog.error("Parse", "解析失败: chapters=" + (fch == null ? "null" : "empty"));
+                                Toast.makeText(ReaderActivity.this, "解析失败", Toast.LENGTH_SHORT).show();
+                                finish();
+                                return;
+                            }
+                            DebugLog.log("Load", "书籍加载成功: chapters=" + fch.size());
+                            chapters = fch;
+                            fileKey = result.fileKey;
+                            epubImageBytes = result.images;
+
+                            // 恢复阅读进度
+                            int sc = result.savedChapter;
+                            int sp = result.savedPage;
+
+                            if (TocActivity.sSelectedChapter >= 0 && TocActivity.sSelectedChapter < fch.size()) {
+                                sc = TocActivity.sSelectedChapter;
+                                sp = 0;
+                                TocActivity.sSelectedChapter = -1;
+                            }
+                            if (sc < 0 || sc >= fch.size()) { sc = 0; sp = 0; }
+                            currentChapterIndex = sc;
+                            readerView.setChapter(chapters.get(currentChapterIndex));
+                            // ★ 传递图片字节数据给 ReaderView，用于 [[IMAGE:path]] 渲染
+                            if (epubImageBytes != null) {
+                                readerView.setChapterImages(epubImageBytes);
+                            }
+                            readerView.applySettings();
+                            if (sp > 0 && sp < readerView.getTotalPages())
+                                readerView.goToPage(sp);
+                            updateStatusBar();
+                            updateProgressBar(readerView.getCurrentPage(), readerView.getTotalPages());
+                            updateProgressLabel();
+                            bookLoaded = true;
+                            if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
+                        } catch (Throwable t) {
+                            DebugLog.error("Load", "UI post failed: type=" + t.getClass().getSimpleName(), t);
+                            if (!isDestroyed) {
+                                Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
+                                finish();
+                            }
+                        }
+                    });
+                } catch (final Exception e) {
+                    DebugLog.error("Reader", "后台线程加载失败", e);
                     uiHandler.post(() -> {
                         if (isDestroyed) return;
-                        Toast.makeText(ReaderActivity.this, "不支持格式", Toast.LENGTH_SHORT).show();
+                        Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
                         finish();
                     });
-                    return;
                 }
-
-                final List<Chapter> fch = pc;
-                uiHandler.post(() -> {
-                    try {
-                        if (isDestroyed) return;
-                        if (fch == null || fch.isEmpty()) {
-                            DebugLog.error("Parse", "解析失败: chapters=" + (fch == null ? "null" : "empty"));
-                            Toast.makeText(ReaderActivity.this, "解析失败", Toast.LENGTH_SHORT).show();
-                            finish();
-                            return;
-                        }
-                        DebugLog.log("Load", "书籍加载成功: chapters=" + fch.size());
-                        chapters = fch;
-
-                        persistBookRecord(fp, fu, isContent, fch.size());
-
-                        int sc = 0, sp = 0;
-                        BookStorage storage = EInkReaderApp.getBookStorage();
-                        if (storage != null) {
-                            BookStorage.BookProgress prog = storage.loadProgress(fileKey);
-                            if (prog != null && prog.chapterIndex < fch.size()) {
-                                sc = prog.chapterIndex;
-                                sp = prog.pageIndex;
-                            } else {
-                                sc = prefs.getInt("lc_" + fileKey, 0);
-                                sp = prefs.getInt("lp_" + fileKey, 0);
-                            }
-                        } else {
-                            sc = prefs.getInt("lc_" + fileKey, 0);
-                            sp = prefs.getInt("lp_" + fileKey, 0);
-                        }
-
-                        if (TocActivity.sSelectedChapter >= 0 && TocActivity.sSelectedChapter < fch.size()) {
-                            sc = TocActivity.sSelectedChapter;
-                            sp = 0;
-                            TocActivity.sSelectedChapter = -1;
-                        }
-                        if (sc < 0 || sc >= fch.size()) { sc = 0; sp = 0; }
-                        currentChapterIndex = sc;
-                        readerView.setChapter(chapters.get(currentChapterIndex));
-                        // ★ 传递图片字节数据给 ReaderView，用于 [[IMAGE:path]] 渲染
-                        if (epubImageBytes != null) {
-                            readerView.setChapterImages(epubImageBytes);
-                        }
-                        readerView.applySettings();
-                        if (sp > 0 && sp < readerView.getTotalPages())
-                            readerView.goToPage(sp);
-                        updateStatusBar();
-                        updateProgressBar(readerView.getCurrentPage(), readerView.getTotalPages());
-                        updateProgressLabel();
-                        bookLoaded = true;
-                        if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE);
-                    } catch (Throwable t) {
-                        DebugLog.error("Load", "UI post failed: type=" + t.getClass().getSimpleName(), t);
-                        if (!isDestroyed) {
-                            Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
-                            finish();
-                        }
-                    }
-                });
-            } catch (final Exception e) {
-                DebugLog.error("Reader", "后台线程加载失败", e);
-                uiHandler.post(() -> {
-                    if (isDestroyed) return;
-                    Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
-                    finish();
-                });
-            }
-        }).start();
-    }
+            }).start();
+        }
 
     private void showToastOnUi(final String m) {
         uiHandler.post(() -> {
@@ -948,80 +848,35 @@ public class ReaderActivity extends Activity {
     }
 
     private void saveProgress() {
-        if (chapters == null || fileKey == null) return;
-        final int chIdx = currentChapterIndex;
-        final int pageIdx = readerView.getCurrentPage();
-        final int totalCh = chapters.size();
+            if (chapters == null || fileKey == null) return;
+            final int chIdx = currentChapterIndex;
+            final int pageIdx = readerView.getCurrentPage();
+            final int totalCh = chapters.size();
 
-        // 异步保存，避免阻塞 UI 翻页
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    prefs.edit()
-                            .putInt("lc_" + fileKey, chIdx)
-                            .putInt("lp_" + fileKey, pageIdx)
-                            .putInt("total_ch_" + fileKey, totalCh)
-                            .apply();
-
-                    BookStorage storage = EInkReaderApp.getBookStorage();
-                    if (storage != null) {
-                        BookStorage.BookProgress prog = new BookStorage.BookProgress();
-                        prog.fileKey = fileKey;
-                        prog.chapterIndex = chIdx;
-                        prog.pageIndex = pageIdx;
-                        prog.totalChapters = totalCh;
-                        storage.saveProgress(prog);
+            // 异步保存，避免阻塞 UI 翻页
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        ServiceLocator.getReaderRepository().saveProgress(fileKey, chIdx, pageIdx, totalCh);
+                    } catch (Exception e) {
+                        DebugLog.error("Progress", "saveProgress failed", e);
                     }
-                } catch (Exception e) {
-                    DebugLog.error("Progress", "saveProgress failed", e);
                 }
-            }
-        }).start();
-    }
+            }).start();
+        }
 
     private void persistBookRecord(String fp, String fu, boolean isContent, int totalChapters) {
-        if (fileKey == null) return;
-        try {
-            BookStorage storage = EInkReaderApp.getBookStorage();
-            if (storage == null) return;
-
-            BookStorage.BookRecord rec = new BookStorage.BookRecord();
-            rec.fileKey = fileKey;
-            rec.filePath = (fp != null) ? fp : (fu != null ? fu : "");
-            rec.format = (fp != null && fp.toLowerCase().endsWith(".epub"))
-                    || (fu != null && fu.toLowerCase().endsWith(".epub")) ? "epub" : "txt";
-            rec.totalChapters = totalChapters;
-
-            String name = "";
-            if (!isContent && fp != null) {
-                File f = new File(fp);
-                name = f.getName();
-                rec.fileSize = f.length();
-                rec.lastModified = f.lastModified();
-            } else if (fu != null) {
-                int slash = Math.max(fu.lastIndexOf('/'), fu.lastIndexOf('\\'));
-                name = slash >= 0 ? fu.substring(slash + 1) : fu;
+            if (fileKey == null) return;
+            try {
+                String format = (fp != null && fp.toLowerCase().endsWith(".epub"))
+                        || (fu != null && fu.toLowerCase().endsWith(".epub")) ? "epub" : "txt";
+                ServiceLocator.getReaderRepository().persistBookRecord(
+                        fileKey, fp, fu, isContent, totalChapters, format);
+            } catch (Exception e) {
+                DebugLog.error("Progress", "persistBookRecord failed", e);
             }
-            int dot = name.lastIndexOf('.');
-            rec.title = dot > 0 ? name.substring(0, dot) : name;
-
-            BookStorage.BookRecord existing = storage.getBook(fileKey);
-            if (existing != null && existing.addedAt > 0) {
-                rec.addedAt = existing.addedAt;
-            } else {
-                rec.addedAt = System.currentTimeMillis();
-            }
-            if (existing != null) {
-                rec.lastReadTime = existing.lastReadTime;
-                rec.totalReadMs = existing.totalReadMs;
-            }
-
-            storage.upsertBook(rec);
-        } catch (Exception e) {
-            DebugLog.error("Progress", "persistBookRecord failed", e);
         }
-    }
 
     @Override protected void onActivityResult(int req, int res, Intent data) {
         super.onActivityResult(req, res, data);

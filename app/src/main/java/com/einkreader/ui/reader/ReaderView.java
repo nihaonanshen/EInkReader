@@ -18,6 +18,11 @@ import android.view.View;
 
 import com.einkreader.core.model.Chapter;
 import com.einkreader.core.Constants;
+import com.einkreader.core.FeatureFlags;
+import com.einkreader.core.NativeBridge;
+import com.einkreader.core.refresh.EinkRefreshManager;
+
+import android.text.TextUtils;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -61,13 +66,16 @@ public class ReaderView extends View {
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private volatile int layoutVersion = 0;
 
-    // ==================== 监听器 ====================
-    private OnPageChangeListener pageChangeListener;
-    private boolean isLayoutReady = false;
-    private boolean enableFirstLineIndent = false;
-    private boolean batchMode = false;
+        // ==================== 监听器 ====================
+        private OnPageChangeListener pageChangeListener;
+        private boolean isLayoutReady = false;
+        private boolean enableFirstLineIndent = false;
+        private boolean batchMode = false;
 
-    // ==================== 绘图工具 ====================
+        // ==================== E Ink 刷新管理 ====================
+        private EinkRefreshManager refreshManager;
+
+        // ==================== 绘图工具 ====================
     private Paint textPaint;
     private Paint imageBgPaint;
     private Paint pageNumPaint;
@@ -178,6 +186,37 @@ public class ReaderView extends View {
         layoutThread = new HandlerThread("layout-bg");
         layoutThread.start();
         backgroundHandler = new Handler(layoutThread.getLooper());
+
+        refreshManager = new EinkRefreshManager(getContext());
+    }
+
+    // ==================== 智能刷新（E Ink 模式选择） ====================
+
+    /**
+     * 根据翻页方向和缓存命中状态，通知 EinkRefreshManager 执行智能刷新
+     *
+     * @param isForward true=向前翻页, false=向后翻页
+     */
+    private void triggerSmartRefresh(boolean isForward) {
+        if (refreshManager == null) { invalidate(); return; }
+        Rect area = new Rect();
+        getDrawingRect(area);
+        boolean cacheHit = false;
+        if (currentChapter != null && currentChapter.getContent() != null) {
+            try {
+                String text = currentChapter.getContent();
+                int w = getWidth();
+                int h = getHeight();
+                cacheHit = NativeBridge.isLayoutCached(
+                    text, w, h,
+                    textSize, lineSpacing, paragraphSpacing,
+                    enableFirstLineIndent, paddingLeft, paddingTop
+                );
+            } catch (Exception e) {
+                cacheHit = false;
+            }
+        }
+        refreshManager.requestSmartRefresh(this, area, isForward, cacheHit);
     }
 
     // ==================== 公开设置方法 ====================
@@ -367,7 +406,64 @@ public class ReaderView extends View {
         content = content.trim();
         if (content.isEmpty()) content = "(本章内容为空)";
 
-        // 后台线程 Paint
+                // ===== Rust 布局分支（二进制路径，直接使用精确坐标） =====
+                                if (FeatureFlags.USE_RUST_LAYOUT) {
+                                    NativeBridge.LayoutResult rustResult = NativeBridge.layoutTextBinary(
+                                        content, contentWidth, contentHeight,
+                                        ts * dens, ls, ps, indentEnabled, padL, padT
+                                    );
+                                    if (rustResult != null && rustResult.totalPages > 0) {
+                                        final List<Page> rustPages = new ArrayList<Page>(rustResult.pages.size());
+                                        for (int pi = 0; pi < rustResult.pages.size(); pi++) {
+                                            NativeBridge.PageData pd = rustResult.pages.get(pi);
+                                            Page page = new Page();
+                                            for (NativeBridge.LineMetric lm : pd.lines) {
+                                                                                            page.lines.add(new TextLine(
+                                                                                                lm.text,
+                                                                                                lm.x,    // Rust 精确 x 坐标（像素）
+                                                                                                lm.y,    // Rust 精确 y 坐标（像素）
+                                                                                                ts,      // fontSize (sp)
+                                                                                                false    // bold flag
+                                                                                            ));
+                                            }
+                                            rustPages.add(page);
+                                        }
+
+                                        final int total = rustPages.size();
+                                        final String fp = pageFingerprint;
+                                        final int fVersion = version;
+                                        mainHandler.post(new Runnable() {
+                                            @Override
+                                            public void run() {
+                                                if (fVersion != layoutVersion) return;
+                                                pages.clear();
+                                                pages.addAll(rustPages);
+                                                totalPages = total;
+                                                if (totalPages == 0) { pages.add(new Page()); totalPages = 1; }
+                                                if (fp != null) {
+                                                    int found = -1;
+                                                    for (int i = 0; i < pages.size(); i++) {
+                                                        Page p = pages.get(i);
+                                                        if (p != null && !p.lines.isEmpty()) {
+                                                            String t = p.lines.get(0).text;
+                                                            if (t != null && t.startsWith(fp)) { found = i; break; }
+                                                        }
+                                                    }
+                                                    if (found >= 0) currentPage = found;
+                                                    else if (currentPage >= totalPages) currentPage = Math.max(0, totalPages - 1);
+                                                }
+                                                decodeCurrentPageImages();
+                                                invalidate();
+                                                notifyPageChanged();
+                                                DebugLog.log("RustLayout", "totalPages=" + totalPages + " elapsedNs=" + rustResult.elapsedNs);
+                                            }
+                                        });
+                                        return;
+                                    }
+                                }
+                // ===== 以上 Rust 分支失败时，自动 fall through 到 Java 实现 =====
+
+                // 后台线程 Paint
         Paint bp = new Paint(Paint.ANTI_ALIAS_FLAG);
         bp.setColor(fgColor);
         bp.setTypeface(tf);
@@ -766,26 +862,26 @@ public class ReaderView extends View {
     // ==================== 翻页 ====================
 
     public boolean prevPage() {
-            if (currentPage > 0) { currentPage--; invalidate(); notifyPageChanged(); decodeCurrentPageImages(); return true; }
+            if (currentPage > 0) { currentPage--; triggerSmartRefresh(true); notifyPageChanged(); decodeCurrentPageImages(); return true; }
         if (pageChangeListener != null) pageChangeListener.onNeedPrevChapter();
         return false;
     }
 
     public boolean nextPage() {
-            if (currentPage < totalPages - 1) { currentPage++; invalidate(); notifyPageChanged(); decodeCurrentPageImages(); return true; }
+            if (currentPage < totalPages - 1) { currentPage++; triggerSmartRefresh(false); notifyPageChanged(); decodeCurrentPageImages(); return true; }
         if (pageChangeListener != null) pageChangeListener.onNeedNextChapter();
         return false;
     }
 
     public void goToPage(int p) {
-            if (p >= 0 && p < totalPages) { currentPage = p; invalidate(); notifyPageChanged(); decodeCurrentPageImages(); }
+            if (p >= 0 && p < totalPages) { currentPage = p; triggerSmartRefresh(false); notifyPageChanged(); decodeCurrentPageImages(); }
         }
 
         public void goToPageSafe(int p) {
             if (totalPages <= 0) return;
             if (p < 0) p = 0;
             if (p >= totalPages) p = totalPages - 1;
-            currentPage = p; invalidate(); notifyPageChanged(); decodeCurrentPageImages();
+            currentPage = p; triggerSmartRefresh(false); notifyPageChanged(); decodeCurrentPageImages();
         }
 
     public int getCurrentPage() { return currentPage; }

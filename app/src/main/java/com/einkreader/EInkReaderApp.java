@@ -5,7 +5,7 @@ import android.app.Application;
 import com.einkreader.core.parser.EpubParser;
 import com.einkreader.core.parser.TxtParser;
 import com.einkreader.core.storage.BookStorage;
-import com.einkreader.core.storage.DatabaseHelper;
+import com.einkreader.di.ServiceLocator;
 
 /**
  * 应用入口 —— APP 启动时最先运行这里
@@ -23,15 +23,16 @@ public class EInkReaderApp extends Application {
         TxtParser.initCacheDir(getCacheDir());
         EpubParser.initCacheDir(getCacheDir());
 
-        // 初始化 SQLite 存储
-        DatabaseHelper db = new DatabaseHelper(this);
-        db.initialize();
-        bookStorage = db;
+        // 初始化 ServiceLocator（统一管理所有依赖）
+        ServiceLocator.init(this);
+        bookStorage = ServiceLocator.getBookStorage();
     }
 
     /**
      * 获取全局 BookStorage 实例
+     * @deprecated 使用 ServiceLocator.getBookStorage() 替代
      */
+    @Deprecated
     public static BookStorage getBookStorage() {
         if (bookStorage == null) {
             throw new IllegalStateException("BookStorage not initialized yet");

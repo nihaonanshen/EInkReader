@@ -249,11 +249,11 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
             c = db.query(TABLE_PROGRESS, null, KEY_FILE_KEY + "=?", new String[]{fileKey}, null, null, null);
             if (c != null && c.moveToFirst()) {
                 BookProgress p = new BookProgress();
-                p.fileKey = c.getString(c.getColumnIndex(KEY_FILE_KEY));
-                p.chapterIndex = c.getInt(c.getColumnIndex(KEY_CHAPTER_INDEX));
-                p.pageIndex = c.getInt(c.getColumnIndex(KEY_PAGE_INDEX));
-                p.totalChapters = c.getInt(c.getColumnIndex(KEY_TOTAL_CHAPTERS));
-                p.updatedAt = c.getLong(c.getColumnIndex(KEY_UPDATED_AT));
+                p.fileKey = c.getString(c.getColumnIndexOrThrow(KEY_FILE_KEY));
+                p.chapterIndex = c.getInt(c.getColumnIndexOrThrow(KEY_CHAPTER_INDEX));
+                p.pageIndex = c.getInt(c.getColumnIndexOrThrow(KEY_PAGE_INDEX));
+                p.totalChapters = c.getInt(c.getColumnIndexOrThrow(KEY_TOTAL_CHAPTERS));
+                p.updatedAt = c.getLong(c.getColumnIndexOrThrow(KEY_UPDATED_AT));
                 progressCache.put(fileKey, p);
                 return p;
             }
@@ -301,16 +301,16 @@ public class DatabaseHelper extends SQLiteOpenHelper implements BookStorage {
 
     private BookRecord cursorToBookRecord(Cursor c) {
         BookRecord r = new BookRecord();
-        r.fileKey = c.getString(c.getColumnIndex(KEY_FILE_KEY));
-        r.filePath = c.getString(c.getColumnIndex(KEY_FILE_PATH));
-        r.title = c.getString(c.getColumnIndex(KEY_TITLE));
-        r.format = c.getString(c.getColumnIndex(KEY_FORMAT));
-        r.fileSize = c.getLong(c.getColumnIndex(KEY_FILE_SIZE));
-        r.lastModified = c.getLong(c.getColumnIndex(KEY_LAST_MODIFIED));
-        r.addedAt = c.getLong(c.getColumnIndex(KEY_ADDED_AT));
-        r.totalChapters = c.getInt(c.getColumnIndex(KEY_TOTAL_CHAPTERS));
-        r.lastReadTime = c.getLong(c.getColumnIndex(KEY_LAST_READ_TIME));
-        r.totalReadMs = c.getLong(c.getColumnIndex(KEY_TOTAL_READ_MS));
+        r.fileKey = c.getString(c.getColumnIndexOrThrow(KEY_FILE_KEY));
+        r.filePath = c.getString(c.getColumnIndexOrThrow(KEY_FILE_PATH));
+        r.title = c.getString(c.getColumnIndexOrThrow(KEY_TITLE));
+        r.format = c.getString(c.getColumnIndexOrThrow(KEY_FORMAT));
+        r.fileSize = c.getLong(c.getColumnIndexOrThrow(KEY_FILE_SIZE));
+        r.lastModified = c.getLong(c.getColumnIndexOrThrow(KEY_LAST_MODIFIED));
+        r.addedAt = c.getLong(c.getColumnIndexOrThrow(KEY_ADDED_AT));
+        r.totalChapters = c.getInt(c.getColumnIndexOrThrow(KEY_TOTAL_CHAPTERS));
+        r.lastReadTime = c.getLong(c.getColumnIndexOrThrow(KEY_LAST_READ_TIME));
+        r.totalReadMs = c.getLong(c.getColumnIndexOrThrow(KEY_TOTAL_READ_MS));
         return r;
     }
 }

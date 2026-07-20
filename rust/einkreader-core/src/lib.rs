@@ -7,5 +7,6 @@
 
 pub mod encoding;
 pub mod jni_bridge;
+pub mod layout;
 pub mod parser;
 pub mod types;
