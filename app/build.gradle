@@ -1,7 +1,5 @@
 plugins {
-    id "org.jetbrains.kotlin.android"
-    id "dagger.hilt.android.plugin" version "2.48"
-    kotlin("kapt") version "1.9.20"
+    id "org.jetbrains.kotlin.android" version "1.9.20"
     id "com.android.application"
     id "jacoco"
 }
@@ -12,7 +10,7 @@ android {
 
     defaultConfig {
         applicationId "com.einkreader"
-        minSdk 24
+        minSdk 19
         targetSdk 35
         versionCode 6
         versionName "0.0.5"
@@ -52,6 +50,10 @@ android {
         targetCompatibility JavaVersion.VERSION_1_8
     }
 
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+
     buildFeatures {
         buildConfig true
         viewBinding true
@@ -76,8 +78,7 @@ jacoco {
 }
 
 dependencies {
-    implementation "com.google.di:hilt-android:2.48"
-    kapt "com.google.di:hilt-compiler:2.48"
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.20"
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.mockito:mockito-core:5.11.0"
     testImplementation "org.robolectric:robolectric:4.11"
