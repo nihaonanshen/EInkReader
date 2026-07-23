@@ -1,0 +1,271 @@
+package com.einkreader.ui.reader
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Rect
+import android.graphics.Typeface
+import android.os.Handler
+import android.os.HandlerThread
+import android.os.Looper
+import android.util.AttributeSet
+import android.util.LruCache
+import android.view.MotionEvent
+import android.view.View
+
+import com.einkreader.core.Constants
+import com.einkreader.core.FeatureFlags
+import com.einkreader.core.NativeBridge
+import com.einkreader.core.model.Chapter
+import com.einkreader.core.refresh.EinkRefreshManager
+import com.einkreader.core.utils.DebugLog
+
+import android.text.TextUtils
+import java.util.ArrayList
+import java.util.Map
+
+/**
+ * ReaderView — 墨水屏阅读器的核心自绘控件
+ *
+ * ★ v2: 分页计算在后台 HandlerThread 执行（主线程捕获尺寸后传入，不阻塞 UI）
+ *   使用 layoutVersion 递增丢弃过期结果
+ */
+class ReaderView @JvmOverloads constructor(
+    context: Context,
+    attrs: AttributeSet? = null,
+    defStyleAttr: Int = 0
+) : View(context, attrs, defStyleAttr) {
+
+    // ==================== 排版设置 ====================
+    private var textSize = 26f
+    private var lineSpacing = 1.5f
+    private var paragraphSpacing = 1.8f
+    private var typeface: Typeface = Typeface.DEFAULT
+    private var bgColor = Color.WHITE
+    @Volatile private var fgColor = Color.BLACK
+    private var mutedColor = 0xFF999999
+    private var paddingLeft = 20
+    private var paddingRight = 20
+    private var paddingTop = 16
+    private var paddingBottom = 16
+
+    // ==================== 分页数据 ====================
+    private val pages = ArrayList<Page>()
+    private var currentPage = 0
+    private var currentChapter: Chapter? = null
+    private var totalPages = 0
+
+    // ==================== 图片数据 ====================
+    private var chapterImages: Map<String, ByteArray>? = null
+    private val bitmapCache: LruCache<String, Bitmap> = object : LruCache<String, Bitmap>(MAX_BITMAP_CACHE_BYTES) {
+        override fun sizeOf(key: String, value: Bitmap): Int {
+            return value.byteCount
+        }
+    }
+
+    companion object {
+        private const val MAX_BITMAP_CACHE_BYTES = 8 * 1024 * 1024
+    }
+
+    // ==================== 后台分页线程 ====================
+    private var layoutThread: HandlerThread? = null
+    private var backgroundHandler: Handler? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile private var layoutVersion = 0
+
+    // ==================== 监听器 ====================
+    private var pageChangeListener: OnPageChangeListener? = null
+    private var isLayoutReady = false
+    private var enableFirstLineIndent = false
+    private var batchMode = false
+    private var layoutPending = false
+    @Volatile private var layoutGeneration = 0
+
+    // ==================== E Ink 刷新管理 ====================
+    private lateinit var refreshManager: EinkRefreshManager
+
+    // ==================== 绘图工具 ====================
+    private lateinit var textPaint: Paint
+    private lateinit var imageBgPaint: Paint
+    private lateinit var pageNumPaint: Paint
+    private var density = 0f
+
+    // ==================== 点击区域 ====================
+    companion object {
+        private const val ZONE_PREV = 0
+        private const val ZONE_NEXT = 1
+        private const val ZONE_MENU = 2
+    }
+
+    // ==================== 防抖 ====================
+    private var lastPageChangeTime = 0L
+    private val PAGE_DEBOUNCE_MS = 250L
+    private var downX = 0f
+    private var downY = 0f
+    private var lastZone = ZONE_MENU
+
+    // ==================== 分页数据模型 ====================
+
+    class Page {
+        val lines = ArrayList<TextLine>()
+        val images = ArrayList<ImageBlock>()
+    }
+
+    data class TextLine(
+        var text: String,
+        var x: Float,
+        var y: Float,
+        var fontSize: Float,
+        var bold: Boolean
+    )
+
+    class ImageBlock {
+        var bitmap: Bitmap? = null
+        var rect: Rect? = null
+        var path: String? = null // 图片路径，用于后台→UI 线程传递
+
+        constructor(bitmap: Bitmap, rect: Rect) {
+            this.bitmap = bitmap
+            this.rect = rect
+        }
+
+        constructor(path: String, rect: Rect) {
+            this.path = path
+            this.rect = rect
+            this.bitmap = null
+        }
+    }
+
+    // ==================== 监听器接口 ====================
+
+    interface OnPageChangeListener {
+        fun onPageChanged(pageIndex: Int, totalPages: Int)
+        fun onChapterChanged(chapterIndex: Int)
+        fun onTapCenter()
+        fun onNeedPrevChapter()
+        fun onNeedNextChapter()
+    }
+
+    // ==================== 初始化 ====================
+
+    init {
+        initCommon()
+    }
+
+    private fun initCommon() {
+        setBackgroundColor(bgColor)
+        density = resources.displayMetrics.density
+        DebugLog.log("Init", "density=$density")
+
+        val defaultDp = 10f
+        val rightDp = 14f
+        paddingLeft = (defaultDp * density + 0.5f).toInt()
+        paddingRight = ((defaultDp + 4f) * density + 0.5f).toInt()
+        paddingTop = (defaultDp * density + 0.5f).toInt()
+        paddingBottom = (defaultDp * density + 0.5f).toInt()
+
+        textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        textPaint.color = fgColor
+        textPaint.typeface = typeface
+        textPaint.textAlign = Paint.Align.LEFT
+
+        imageBgPaint = Paint()
+        imageBgPaint.color = 0xFFF0F0F0
+
+        pageNumPaint = Paint()
+        pageNumPaint.color = mutedColor
+        pageNumPaint.textSize = Constants.PAGE_NUMBER_TEXT_SIZE_SP * density
+        pageNumPaint.textAlign = Paint.Align.CENTER
+
+        layoutThread = HandlerThread("layout-bg")
+        layoutThread?.start()
+        backgroundHandler = layoutThread?.looper?.let { Handler(it) }
+
+        refreshManager = EinkRefreshManager(context)
+    }
+
+    // ==================== 智能刷新（E Ink 模式选择） ====================
+
+    /**
+     * 根据翻页方向和缓存命中状态，通知 EinkRefreshManager 执行智能刷新
+     *
+     * @param isForward true=向前翻页, false=向后翻页
+     */
+    private fun triggerSmartRefresh(isForward: Boolean) {
+        if (refreshManager == null) { invalidate(); return }
+        val area = Rect()
+        getDrawingRect(area)
+        var cacheHit = false
+        if (currentChapter != null && currentChapter?.content != null) {
+            try {
+                val text = currentChapter!!.content!!
+                val w = width
+                val h = height
+                cacheHit = NativeBridge.isLayoutCached(
+                    text, w.toFloat(), h.toFloat(),
+                    textSize, lineSpacing, paragraphSpacing,
+                    enableFirstLineIndent, paddingLeft.toFloat(), paddingTop.toFloat()
+                )
+            } catch (e: Exception) {
+                cacheHit = false
+            }
+        }
+        refreshManager.requestSmartRefresh(this, area, isForward, cacheHit)
+    }
+
+    // ==================== 公开设置方法 ====================
+
+    fun setTextSize(sp: Float) {
+        textSize = sp
+        applySettings()
+    }
+
+    fun setLineSpacing(spacing: Float) {
+        lineSpacing = spacing
+        applySettings()
+    }
+
+    fun setParagraphSpacing(spacing: Float) {
+        paragraphSpacing = spacing
+        applySettings()
+    }
+
+    fun setFirstLineIndent(enable: Boolean) {
+        enableFirstLineIndent = enable
+        applySettings()
+    }
+
+    fun setHorizontalMargin(dp: Int) {
+        val px = (dp * density + 0.5f).toInt()
+        paddingLeft = px
+        paddingRight = ((dp + 4f) * density + 0.5f).toInt()
+        applySettings()
+    }
+
+    fun beginBatchUpdate() {
+        batchMode = true
+    }
+
+    fun commitBatchUpdate() {
+        batchMode = false
+        applySettings()
+    }
+
+    fun setCustomTypeface(tf: Typeface?) {
+        typeface = tf ?: Typeface.DEFAULT
+        textPaint.typeface = typeface
+        applySettings()
+    }
+
+    fun setNightMode(night: Boolean) {
+        if (night) {
+            bgColor = 0xFF000000
+            fgColor = 0xFFBBBBBB
+            mutedColor = 0xFF555555
+        } else {
+            bgColor = Color.WHITE
+            fgColor = Color.BLACK
+            mutedColor = 0xFF
