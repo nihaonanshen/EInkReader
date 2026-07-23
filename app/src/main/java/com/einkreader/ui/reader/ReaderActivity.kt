@@ -39,9 +39,9 @@ import java.util.Locale
 import java.util.Map
 import java.util.Set
 
-public class ReaderActivity extends Activity {
+class ReaderActivity extends Activity {
 
-    private static final String PREFS_NAME = "eink_reader_prefs"
+    private static final String PREFS_NAME = "eink_reader_prefs";
 
     private ReaderView readerView
     private View topStatusBar
@@ -60,13 +60,13 @@ public class ReaderActivity extends Activity {
 
     // 目录/书签的翻页状态
     private java.util.List<String> tocItems = new java.util.ArrayList<>()
-    private int tocPageSize = 15;  // 每页显示条目数（动态计算）
-    private int tocItemHeightPx = 72;  // 每个条目的高度（像素，动态计算）
-    private int tocCurrentPage = 0
-    private float tocTextSizeSp = 18f;  // 目录文字大小（SP）
-    private boolean tocLayoutValid = false;  // ★ TOC 布局缓存标记
+    private var tocPageSize =  15;  // 每页显示条目数（动态计算）
+    private var tocItemHeightPx =  72;  // 每个条目的高度（像素，动态计算）
+    private var tocCurrentPage =  0
+    private var tocTextSizeSp =  18f;  // 目录文字大小（SP）
+    private var tocLayoutValid =  false;  // ★ TOC 布局缓存标记
     private java.util.List<String> bookmarkItems = new java.util.ArrayList<>()
-    private int bookmarkCurrentPage = 0
+    private var bookmarkCurrentPage =  0
 
     private TextView statusTime, statusChapter, statusBattery
     private TextView btnBack, btnToc, btnBookmark, btnSettings, btnShowLog
@@ -77,22 +77,22 @@ public class ReaderActivity extends Activity {
 
     private EinkRefreshManager refreshManager
     private List<Chapter> chapters
-    private int currentChapterIndex = 0
+    private var currentChapterIndex =  0
     private SharedPreferences prefs
-    private boolean menuVisible = false
+    private var menuVisible =  false
     private String filePath
     private String fileKey
     private Handler uiHandler
     private long readingStartTime
-    private volatile boolean isDestroyed = false
-    private volatile boolean bookLoaded = false
+    private var isDestroyed =  false
+    private var bookLoaded =  false
     private static final long LOADING_TIMEOUT_MS = 30000L
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState)
         DebugLog.init()
-        DebugLog.log("Lifecycle", "onCreate: savedInstanceState=" + (savedInstanceState != null))
+        DebugLog.log("Lifecycle", "onCreate: savedInstanceState=" + (savedInstanceState != null));
         requestWindowFeature(Window.FEATURE_NO_TITLE)
         getWindow().setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                 WindowManager.LayoutParams.FLAG_FULLSCREEN)
@@ -104,7 +104,7 @@ public class ReaderActivity extends Activity {
         uiHandler = new Handler(Looper.getMainLooper())
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
-        float savedBrightness = prefs.getFloat("screen_brightness", 0.5f)
+        float savedBrightness = prefs.getFloat("screen_brightness", 0.5f);
         WindowManager.LayoutParams lp = getWindow().getAttributes()
         lp.screenBrightness = savedBrightness
         getWindow().setAttributes(lp)
@@ -158,7 +158,7 @@ public class ReaderActivity extends Activity {
                         int startIdx = tocCurrentPage * tocPageSize
                         int clickIdx = startIdx + row
                         if (clickIdx >= startIdx && clickIdx < startIdx + tocPageSize && clickIdx < tocItems.size() && chapters != null && clickIdx < chapters.size()) {
-                            DebugLog.log("TOC", "点击目录项: row=" + row + " idx=" + clickIdx + " item=" + tocItems.get(clickIdx) + " y=" + y + " itemTop=" + itemTop + " itemH=" + tocItemHeightPx)
+                            DebugLog.log("TOC", "点击目录项: row=" + row + " idx=" + clickIdx + " item=" + tocItems.get(clickIdx) + " y=" + y + " itemTop=" + itemTop + " itemH=" + tocItemHeightPx);
                             switchChapterTo(clickIdx)
                             exitFullOverlay()
                         } else if (x < w * 0.33f) {
@@ -182,7 +182,7 @@ public class ReaderActivity extends Activity {
                         int startIdx = bookmarkCurrentPage * tocPageSize
                         int clickIdx = startIdx + row
                         if (clickIdx >= startIdx && clickIdx < startIdx + tocPageSize && clickIdx < bookmarkItems.size()) {
-                            DebugLog.log("Bookmark", "点击书签项: row=" + row + " idx=" + clickIdx)
+                            DebugLog.log("Bookmark", "点击书签项: row=" + row + " idx=" + clickIdx);
                             jumpToBookmark(clickIdx)
                             exitFullOverlay()
                         } else if (x < w * 0.33f) {
@@ -255,11 +255,11 @@ public class ReaderActivity extends Activity {
             if (readerView != null) readerView.performFullRefresh()
         })
 
-        float savedSize = prefs.getFloat("text_size", 28f)
+        float savedSize = prefs.getFloat("text_size", 28f);
 
         readerView.setOnPageChangeListener(new ReaderView.OnPageChangeListener() {
             @Override public void onPageChanged(int pageIndex, int totalPages) {
-                DebugLog.log("Page", "onPageChanged: " + pageIndex + "/" + totalPages)
+                DebugLog.log("Page", "onPageChanged: " + pageIndex + "/" + totalPages);
                 if (!bookLoaded) return
                 saveProgress()
                 updateStatusBar()
@@ -269,25 +269,25 @@ public class ReaderActivity extends Activity {
             }
 
             @Override public void onChapterChanged(int chapterIndex) {
-                DebugLog.log("Chapter", "onChapterChanged: chapter=" + chapterIndex)
+                DebugLog.log("Chapter", "onChapterChanged: chapter=" + chapterIndex);
                 if (!bookLoaded) return
                 updateProgressBar(readerView.getCurrentPage(), readerView.getTotalPages())
                 updateProgressLabel()
             }
 
             @Override public void onTapCenter() {
-                DebugLog.log("UI", "onTapCenter: menuVisible=" + menuVisible)
+                DebugLog.log("UI", "onTapCenter: menuVisible=" + menuVisible);
                 if (!bookLoaded) return
                 toggleMenu(!menuVisible)
             }
 
             @Override public void onNeedPrevChapter() {
-                DebugLog.log("Nav", "onNeedPrevChapter")
+                DebugLog.log("Nav", "onNeedPrevChapter");
                 if (!bookLoaded) return
                 goToPrevChapter()
             }
             @Override public void onNeedNextChapter() {
-                DebugLog.log("Nav", "onNeedNextChapter")
+                DebugLog.log("Nav", "onNeedNextChapter");
                 if (!bookLoaded) return
                 goToNextChapter()
             }
@@ -302,9 +302,9 @@ public class ReaderActivity extends Activity {
     }
 
     private void adjustFontSize(int delta) {
-        float current = prefs.getFloat("text_size", 28f)
+        float current = prefs.getFloat("text_size", 28f);
         float next = Math.max(14f, Math.min(64f, current + delta))
-        prefs.edit().putFloat("text_size", next).apply()
+        prefs.edit().putFloat("text_size", next).apply();
         if (readerView != null) readerView.setTextSize(next)
     }
 
@@ -314,7 +314,7 @@ public class ReaderActivity extends Activity {
         float next = Math.max(0.05f, Math.min(1.0f, cur + delta))
         lp.screenBrightness = next
         getWindow().setAttributes(lp)
-        prefs.edit().putFloat("screen_brightness", next).apply()
+        prefs.edit().putFloat("screen_brightness", next).apply();
     }
 
     private enum FullOverlayMode { NONE, TOC, BOOKMARK }
@@ -326,7 +326,7 @@ public class ReaderActivity extends Activity {
         if (fullTocContainer != null) fullTocContainer.setVisibility(mode == FullOverlayMode.TOC ? View.VISIBLE : View.GONE)
         if (fullBookmarkContainer != null) fullBookmarkContainer.setVisibility(mode == FullOverlayMode.BOOKMARK ? View.VISIBLE : View.GONE)
         if (fullOverlayTitle != null) {
-            fullOverlayTitle.setText(mode == FullOverlayMode.TOC ? "目录" : "书签")
+            fullOverlayTitle.setText(mode == FullOverlayMode.TOC ? "目录" : "书签");
         }
         // 全屏时隐藏状态栏和底部菜单，避免遮挡
         if (topStatusBar != null) topStatusBar.setVisibility(View.GONE)
@@ -359,7 +359,7 @@ public class ReaderActivity extends Activity {
 
     private void loadTocList() {
         if (chapters == null || chapters.isEmpty()) {
-            Toast.makeText(this, "暂无章节", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "暂无章节", Toast.LENGTH_SHORT).show();
             return
         }
         // ★ 动态计算目录布局，适配不同屏幕尺寸
@@ -367,8 +367,8 @@ public class ReaderActivity extends Activity {
         ArrayList<String> titles = new ArrayList<>()
         for (int i = 0; i < chapters.size(); i++) {
             Chapter c = chapters.get(i)
-            String t = c.getTitle() != null ? c.getTitle() : ("第" + (i + 1) + "章")
-            if (i == currentChapterIndex) t = "▶ " + t
+            String t = c.getTitle() != null ? c.getTitle() : ("第" + (i + 1) + "章");
+            if (i == currentChapterIndex) t = "▶ " + t;
             titles.add(t)
         }
         tocItems = titles
@@ -422,7 +422,7 @@ public class ReaderActivity extends Activity {
 
         DebugLog.log("TOC", "calculateTocLayout: screenH=" + screenHeight + " density=" + density
                 + " headerH=" + headerHeight + " availH=" + availHeight + " textAvailH=" + textAvailHeight
-                + " lineH=" + lineHeightPx + " itemH=" + tocItemHeightPx + " pageSize=" + tocPageSize)
+                + " lineH=" + lineHeightPx + " itemH=" + tocItemHeightPx + " pageSize=" + tocPageSize);
         tocLayoutValid = true
     }
 
@@ -438,10 +438,10 @@ public class ReaderActivity extends Activity {
         StringBuilder sb = new StringBuilder()
         for (int i = start; i < end; i++) {
             sb.append(tocItems.get(i))
-            if (i < end - 1) sb.append("\n\n")
+            if (i < end - 1) sb.append("\n\n");
         }
         fullTocText.setText(sb.toString())
-        fullTocPage.setText((tocCurrentPage + 1) + " / " + totalPages)
+        fullTocPage.setText((tocCurrentPage + 1) + " / " + totalPages);
     }
 
     private void tocPrevPage() {
@@ -458,7 +458,7 @@ public class ReaderActivity extends Activity {
         try {
             list = ServiceLocator.getReaderRepository().loadBookmarks(fileKey)
         } catch (Exception e) {
-            DebugLog.error("Bookmark", "loadBookmarks failed", e)
+            DebugLog.error("Bookmark", "loadBookmarks failed", e);
         }
         bookmarkItems = new ArrayList<>(list)
         bookmarkCurrentPage = 0
@@ -475,11 +475,11 @@ public class ReaderActivity extends Activity {
         StringBuilder sb = new StringBuilder()
         for (int i = start; i < end; i++) {
             sb.append(bookmarkItems.get(i))
-            if (i < end - 1) sb.append("\n\n")
+            if (i < end - 1) sb.append("\n\n");
         }
-        if (bookmarkItems.isEmpty()) sb.append("暂无书签")
+        if (bookmarkItems.isEmpty()) sb.append("暂无书签");
         fullBookmarkText.setText(sb.toString())
-        fullBookmarkPage.setText((bookmarkCurrentPage + 1) + " / " + Math.max(1, totalPages))
+        fullBookmarkPage.setText((bookmarkCurrentPage + 1) + " / " + Math.max(1, totalPages));
     }
 
     private void bookmarkPrevPage() {
@@ -499,24 +499,24 @@ public class ReaderActivity extends Activity {
                 switchChapterTo(ch)
             }
         } catch (Exception e) {
-            DebugLog.error("Bookmark", "jumpToBookmark failed", e)
+            DebugLog.error("Bookmark", "jumpToBookmark failed", e);
         }
     }
 
     private void addBookmark() {
         if (fileKey == null || readerView == null) return
         try {
-            String title = ""
+            String title = "";
             if (chapters != null && currentChapterIndex < chapters.size()) {
                 Chapter c = chapters.get(currentChapterIndex)
-                title = c.getTitle() != null ? c.getTitle() : ("第" + (currentChapterIndex + 1) + "章")
+                title = c.getTitle() != null ? c.getTitle() : ("第" + (currentChapterIndex + 1) + "章");
             }
             ServiceLocator.getReaderRepository().addBookmark(
                     fileKey, currentChapterIndex, readerView.getCurrentPage(), title)
-            Toast.makeText(this, "已加书签", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已加书签", Toast.LENGTH_SHORT).show();
         } catch (Exception e) {
-            DebugLog.error("Bookmark", "addBookmark failed", e)
-            Toast.makeText(this, "书签保存失败", Toast.LENGTH_SHORT).show()
+            DebugLog.error("Bookmark", "addBookmark failed", e);
+            Toast.makeText(this, "书签保存失败", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -567,12 +567,12 @@ public class ReaderActivity extends Activity {
     }
 
     private void loadBook() {
-            DebugLog.log("Load", "loadBook start")
+            DebugLog.log("Load", "loadBook start");
             bookLoaded = false
             epubImageBytes = null; // ★ 重置图片数据，防止跨书泄露
             if (loadingFilename != null) {
-                String name = filePath != null ? filePath : ""
-                int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'))
+                String name = filePath != null ? filePath : "";
+                int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
                 loadingFilename.setText(slash >= 0 ? name.substring(slash + 1) : name)
             }
             if (loadingOverlay != null) {
@@ -584,16 +584,16 @@ public class ReaderActivity extends Activity {
                         if (isDestroyed) return
                         if (loadingOverlay != null && loadingOverlay.getVisibility() == View.VISIBLE) {
                             loadingOverlay.setVisibility(View.GONE)
-                            Toast.makeText(ReaderActivity.this, "加载超时", Toast.LENGTH_LONG).show()
+                            Toast.makeText(ReaderActivity.this, "加载超时", Toast.LENGTH_LONG).show();
                         }
                     }
                 }, LOADING_TIMEOUT_MS)
             }
-            filePath = getIntent().getStringExtra("file_path")
-            String fileUri = getIntent().getStringExtra("file_uri")
+            filePath = getIntent().getStringExtra("file_path");
+            String fileUri = getIntent().getStringExtra("file_uri");
             if ((filePath == null || filePath.isEmpty()) && fileUri == null) {
-                DebugLog.error("Load", "书籍路径为空")
-                Toast.makeText(this, "书籍路径为空", Toast.LENGTH_SHORT).show()
+                DebugLog.error("Load", "书籍路径为空");
+                Toast.makeText(this, "书籍路径为空", Toast.LENGTH_SHORT).show();
                 finish()
                 return
             }
@@ -608,7 +608,7 @@ public class ReaderActivity extends Activity {
                     BookResult result = repo.loadBook(fp, fu)
 
                     if (result == null || !result.isValid()) {
-                        showToastOnUi("解析失败")
+                        showToastOnUi("解析失败");
                         return
                     }
 
@@ -618,12 +618,12 @@ public class ReaderActivity extends Activity {
                         try {
                             if (isDestroyed) return
                             if (fch == null || fch.isEmpty()) {
-                                DebugLog.error("Parse", "解析失败: chapters=" + (fch == null ? "null" : "empty"))
-                                Toast.makeText(ReaderActivity.this, "解析失败", Toast.LENGTH_SHORT).show()
+                                DebugLog.error("Parse", "解析失败: chapters=" + (fch == null ? "null" : "empty"));
+                                Toast.makeText(ReaderActivity.this, "解析失败", Toast.LENGTH_SHORT).show();
                                 finish()
                                 return
                             }
-                            DebugLog.log("Load", "书籍加载成功: chapters=" + fch.size())
+                            DebugLog.log("Load", "书籍加载成功: chapters=" + fch.size());
                             chapters = fch
                             fileKey = result.fileKey
                             epubImageBytes = result.images
@@ -653,18 +653,18 @@ public class ReaderActivity extends Activity {
                             bookLoaded = true
                             if (loadingOverlay != null) loadingOverlay.setVisibility(View.GONE)
                         } catch (Throwable t) {
-                            DebugLog.error("Load", "UI post failed: type=" + t.getClass().getSimpleName(), t)
+                            DebugLog.error("Load", "UI post failed: type=" + t.getClass().getSimpleName(), t);
                             if (!isDestroyed) {
-                                Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show()
+                                Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
                                 finish()
                             }
                         }
                     })
                 } catch (final Exception e) {
-                    DebugLog.error("Reader", "后台线程加载失败", e)
+                    DebugLog.error("Reader", "后台线程加载失败", e);
                     uiHandler.post(() -> {
                         if (isDestroyed) return
-                        Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show()
+                        Toast.makeText(ReaderActivity.this, "加载失败", Toast.LENGTH_LONG).show();
                         finish()
                     })
                 }
@@ -704,7 +704,7 @@ public class ReaderActivity extends Activity {
             switchChapter(-1)
             readerView.goToPage(readerView.getTotalPages() - 1)
         } else {
-            Toast.makeText(this, "已经是第一章了", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已经是第一章了", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -713,7 +713,7 @@ public class ReaderActivity extends Activity {
             switchChapter(1)
             readerView.goToPage(0)
         } else {
-            Toast.makeText(this, "已经是最后一章了", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "已经是最后一章了", Toast.LENGTH_SHORT).show();
         }
     }
 
@@ -761,7 +761,7 @@ public class ReaderActivity extends Activity {
                 )
             }
         } catch (Exception e) {
-            DebugLog.error("UI", "applyImmersiveMode failed", e)
+            DebugLog.error("UI", "applyImmersiveMode failed", e);
         }
     }
 
@@ -769,17 +769,17 @@ public class ReaderActivity extends Activity {
         try {
             String log = DebugLog.getLog()
             StringBuilder sb = new StringBuilder()
-            sb.append("日志文件路径：\n").append(DebugLog.getLogFilePath()).append("\n\n")
+            sb.append("日志文件路径：\n").append(DebugLog.getLogFilePath()).append("\n\n");
             if (log != null && log.length() > 0) {
                 // 限制显示长度，避免弹窗过长
                 if (log.length() > 30000) {
-                    sb.append("（日志过长，仅显示最后部分）\n\n")
+                    sb.append("（日志过长，仅显示最后部分）\n\n");
                     sb.append(log.substring(log.length() - 30000))
                 } else {
                     sb.append(log)
                 }
             } else {
-                sb.append("暂无日志")
+                sb.append("暂无日志");
             }
             new AlertDialog.Builder(this)
                     .setTitle("调试日志")
@@ -788,26 +788,26 @@ public class ReaderActivity extends Activity {
                     .setNegativeButton("关闭", null)
                     .show()
         } catch (Exception e) {
-            Toast.makeText(this, "无法读取日志", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "无法读取日志", Toast.LENGTH_SHORT).show();
         }
     }
 
     private void updateStatusBar() {
         if (statusTime != null)
-            statusTime.setText(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()))
+            statusTime.setText(new SimpleDateFormat("HH:mm", Locale.getDefault()).format(new Date()));
 
         if (statusChapter != null && chapters != null && currentChapterIndex < chapters.size()) {
             String title = chapters.get(currentChapterIndex).getTitle()
-            String chapText = (title != null) ? title : ("第" + (currentChapterIndex + 1) + "章")
-            statusChapter.setText(chapText + "  (" + (currentChapterIndex + 1) + "/" + chapters.size() + ")")
+            String chapText = (title != null) ? title : ("第" + (currentChapterIndex + 1) + "章");
+            statusChapter.setText(chapText + "  (" + (currentChapterIndex + 1) + "/" + chapters.size() + ")");
         }
 
         if (readerView != null) {
-            String pageText = readerView.getCurrentPage() + "/" + readerView.getTotalPages()
+            String pageText = readerView.getCurrentPage() + "/" + readerView.getTotalPages();
             if (statusChapter != null) {
                 CharSequence existing = statusChapter.getText()
                 if (existing != null && existing.length() > 0) {
-                    statusChapter.setText(existing + "  ·  " + pageText)
+                    statusChapter.setText(existing + "  ·  " + pageText);
                 } else {
                     statusChapter.setText(pageText)
                 }
@@ -826,7 +826,7 @@ public class ReaderActivity extends Activity {
                                 (int) ((level / (float) scale) * 100)))
                 }
             } catch (Exception e) {
-                DebugLog.error("UI", "updateStatusBar battery failed", e)
+                DebugLog.error("UI", "updateStatusBar battery failed", e);
             }
         }
     }
@@ -843,7 +843,7 @@ public class ReaderActivity extends Activity {
 
     private void updateProgressLabel() {
         if (progressLabel != null && readerView != null) {
-            progressLabel.setText(readerView.getCurrentPage() + " / " + readerView.getTotalPages() + " 页")
+            progressLabel.setText(readerView.getCurrentPage() + " / " + readerView.getTotalPages() + " 页");
         }
     }
 
@@ -860,7 +860,7 @@ public class ReaderActivity extends Activity {
                     try {
                         ServiceLocator.getReaderRepository().saveProgress(fileKey, chIdx, pageIdx, totalCh)
                     } catch (Exception e) {
-                        DebugLog.error("Progress", "saveProgress failed", e)
+                        DebugLog.error("Progress", "saveProgress failed", e);
                     }
                 }
             }).start()
@@ -870,11 +870,11 @@ public class ReaderActivity extends Activity {
             if (fileKey == null) return
             try {
                 String format = (fp != null && fp.toLowerCase().endsWith(".epub"))
-                        || (fu != null && fu.toLowerCase().endsWith(".epub")) ? "epub" : "txt"
+                        || (fu != null && fu.toLowerCase().endsWith(".epub")) ? "epub" : "txt";
                 ServiceLocator.getReaderRepository().persistBookRecord(
                         fileKey, fp, fu, isContent, totalChapters, format)
             } catch (Exception e) {
-                DebugLog.error("Progress", "persistBookRecord failed", e)
+                DebugLog.error("Progress", "persistBookRecord failed", e);
             }
         }
 
@@ -888,12 +888,12 @@ public class ReaderActivity extends Activity {
             // ★ 批量应用所有设置，只触发一次 layoutPages（原先 5+ 次重排→1 次）
             // 位置恢复由 layoutPages 内部基于文字指纹自动完成
             readerView.beginBatchUpdate()
-            readerView.setTextSize(prefs.getFloat("text_size", 28f))
-            readerView.setLineSpacing(prefs.getInt("line_spacing", 15) / 10f)
-            readerView.setParagraphSpacing(prefs.getInt("para_spacing", 18) / 10f)
-            readerView.setHorizontalMargin(prefs.getInt("horizontal_margin", 10))
-            readerView.setFirstLineIndent(prefs.getBoolean("first_line_indent", false))
-            String fp = prefs.getString("font_path", "")
+            readerView.setTextSize(prefs.getFloat("text_size", 28f));
+            readerView.setLineSpacing(prefs.getInt("line_spacing", 15) / 10f);
+            readerView.setParagraphSpacing(prefs.getInt("para_spacing", 18) / 10f);
+            readerView.setHorizontalMargin(prefs.getInt("horizontal_margin", 10));
+            readerView.setFirstLineIndent(prefs.getBoolean("first_line_indent", false));
+            String fp = prefs.getString("font_path", "");
             if (!fp.isEmpty()) {
                 File ff = new File(fp)
                 if (ff.exists())
@@ -901,7 +901,7 @@ public class ReaderActivity extends Activity {
             }
             readerView.commitBatchUpdate()
         }
-        boolean night = prefs.getBoolean("night_mode", false)
+        boolean night = prefs.getBoolean("night_mode", false);
         applyNightMode(night)
 
         // 确保沉浸式全屏不被系统/Activity 恢复覆盖
@@ -909,13 +909,13 @@ public class ReaderActivity extends Activity {
     }
 
     @Override protected void onPause() {
-        DebugLog.log("Lifecycle", "onPause")
+        DebugLog.log("Lifecycle", "onPause");
         super.onPause()
         saveProgress()
         if (readingStartTime > 0 && fileKey != null) {
             long elapsed = System.currentTimeMillis() - readingStartTime
             if (elapsed >= 1000) {
-                long total = prefs.getLong("read_time_" + fileKey, 0)
+                long total = prefs.getLong("read_time_" + fileKey, 0);
                 prefs.edit()
                         .putLong("read_time_" + fileKey, total + elapsed)
                         .putLong("total_read_time",
@@ -927,7 +927,7 @@ public class ReaderActivity extends Activity {
     }
 
     @Override public void onBackPressed() {
-        DebugLog.log("Nav", "onBackPressed: fullOverlayMode=" + fullOverlayMode)
+        DebugLog.log("Nav", "onBackPressed: fullOverlayMode=" + fullOverlayMode);
         if (fullOverlayMode != FullOverlayMode.NONE) {
             exitFullOverlay()
             return
@@ -938,7 +938,7 @@ public class ReaderActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        DebugLog.log("Lifecycle", "onDestroy")
+        DebugLog.log("Lifecycle", "onDestroy");
         super.onDestroy()
         isDestroyed = true
     }

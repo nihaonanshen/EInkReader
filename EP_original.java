@@ -1,32 +1,32 @@
-package com.einkreader.core.parser
+package com.einkreader.core.parser;
 
-import android.util.Log
+import android.util.Log;
 
-import com.einkreader.core.model.Chapter
+import com.einkreader.core.model.Chapter;
 
-import org.xmlpull.v1.XmlPullParser
-import org.xmlpull.v1.XmlPullParserFactory
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserFactory;
 
-import java.io.BufferedReader
-import java.io.BufferedInputStream
-import java.io.ByteArrayOutputStream
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.io.IOException
-import java.io.InputStream
-import java.io.InputStreamReader
-import java.io.OutputStreamWriter
-import java.util.ArrayList
-import java.util.HashMap
-import java.util.HashSet
-import java.util.List
-import java.util.Map
-import java.util.Set
-import java.util.concurrent.ConcurrentHashMap
-import java.util.regex.Pattern
-import java.util.zip.ZipEntry
-import java.util.zip.ZipFile
+import java.io.BufferedReader;
+import java.io.BufferedInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * EPUB 文件解析器（全功能版）
@@ -40,20 +40,20 @@ import java.util.zip.ZipFile
  *
  * ★ 新增图片支持：提取 <img> 标签，从 ZIP 读取图片数据
  */
-class EpubParser {
+public class EpubParser {
     private static final String TAG = "EpubParser";
     private static final String CACHE_DIR_NAME = "epub_parse_cache";
 
     // 块级 HTML 标签 —— 遇到这些就换行
-    private static final java.util.HashSet<String> BLOCK_TAGS = new java.util.HashSet<String>()
-companion object {
+    private static final java.util.HashSet<String> BLOCK_TAGS = new java.util.HashSet<String>();
+    static {
         String[] tags = {
                 "p", "div", "h1", "h2", "h3", "h4", "h5", "h6",
                 "blockquote", "pre", "li", "section", "article",
                 "table", "tr", "hr", "address", "dd", "dt",
                 "header", "footer", "nav", "aside", "ol", "ul"
-        }
-        for (String t : tags) BLOCK_TAGS.add(t)
+        };
+        for (String t : tags) BLOCK_TAGS.add(t);
     }
 
     // 段落类型标记：嵌入文本中，正则清理不受影响，用于最终构建 paraTypes
@@ -80,37 +80,37 @@ companion object {
     private static final Pattern REGEX_TRAILING_FULLWIDTH = Pattern.compile("[\\u3000]+$");
 
     // 需要跳过内容的标签
-    private static final java.util.HashSet<String> SKIP_TAGS = new java.util.HashSet<String>()
-companion object {
+    private static final java.util.HashSet<String> SKIP_TAGS = new java.util.HashSet<String>();
+    static {
         SKIP_TAGS.add("style");
         SKIP_TAGS.add("script");
         SKIP_TAGS.add("head");
     }
 
     // 解析结果
-    public class EpubResult {
-            public String title
-            public String author
+    public static class EpubResult {
+            public String title;
+            public String author;
             public String encoding = "UTF-8";
-            public List<Chapter> chapters
-            public List<String> spineOrder
-            String ncxHref
+            public List<Chapter> chapters;
+            public List<String> spineOrder;
+            String ncxHref;
             String navXhtmlHref;  // EPUB3 nav.xhtml 路径（兜底目录来源）
             public Map<String, byte[]> images;  // 图片数据：path -> raw bytes
 
             public EpubResult() {
-                chapters = new ArrayList<Chapter>()
-                spineOrder = new ArrayList<String>()
-                images = new HashMap<String, byte[]>()
+                chapters = new ArrayList<Chapter>();
+                spineOrder = new ArrayList<String>();
+                images = new HashMap<String, byte[]>();
             }
         }
 
     // 缓存目录
-    private static File sCacheBaseDir = null
+    private static File sCacheBaseDir = null;
 
     public static void initCacheDir(File appCacheDir) {
         // ★ 始终使用应用私有缓存目录，避免数据泄露到外部存储
-        sCacheBaseDir = new File(appCacheDir, CACHE_DIR_NAME)
+        sCacheBaseDir = new File(appCacheDir, CACHE_DIR_NAME);
         if (!sCacheBaseDir.exists() && !sCacheBaseDir.mkdirs()) {
             Log.w(TAG, "缓存目录创建失败: " + sCacheBaseDir.getAbsolutePath());
         }
@@ -119,20 +119,20 @@ companion object {
     // ===== 公开 API =====
 
     // 文件级解析锁，防止同一文件并发重复解析
-    private static final ConcurrentHashMap<String, Object> sParseLocks = new ConcurrentHashMap<String, Object>()
+    private static final ConcurrentHashMap<String, Object> sParseLocks = new ConcurrentHashMap<String, Object>();
 
     public static EpubResult parse(File file) throws IOException {
-        String lockKey = file.getAbsolutePath()
-        Object lock = sParseLocks.computeIfAbsent(lockKey, k -> new Object())
+        String lockKey = file.getAbsolutePath();
+        Object lock = sParseLocks.computeIfAbsent(lockKey, k -> new Object());
         synchronized (lock) {
             try {
-                EpubResult cached = readCache(file)
-                if (cached != null) return cached
-                EpubResult result = doParse(file)
-                writeCache(file, result)
-                return result
+                EpubResult cached = readCache(file);
+                if (cached != null) return cached;
+                EpubResult result = doParse(file);
+                writeCache(file, result);
+                return result;
             } finally {
-                sParseLocks.remove(lockKey, lock)
+                sParseLocks.remove(lockKey, lock);
             }
         }
     }
@@ -141,66 +141,66 @@ companion object {
 
     private static EpubResult doParse(File file) throws IOException {
         if (file == null) throw new IllegalArgumentException("file must not be null");
-        EpubResult result = new EpubResult()
-        ZipFile zipFile = null
+        EpubResult result = new EpubResult();
+        ZipFile zipFile = null;
         try {
-            zipFile = new ZipFile(file)
+            zipFile = new ZipFile(file);
 
             // ★ 构建 ZIP 项小写名称映射表（所有依路径查找都用这个，避免 O(N) 遍历）
-            Map<String, ZipEntry> lcEntryMap = new HashMap<String, ZipEntry>()
-            java.util.Enumeration<? extends ZipEntry> allEntries = zipFile.entries()
+            Map<String, ZipEntry> lcEntryMap = new HashMap<String, ZipEntry>();
+            java.util.Enumeration<? extends ZipEntry> allEntries = zipFile.entries();
             while (allEntries.hasMoreElements()) {
-                ZipEntry ze = allEntries.nextElement()
-                lcEntryMap.put(ze.getName().toLowerCase(), ze)
+                ZipEntry ze = allEntries.nextElement();
+                lcEntryMap.put(ze.getName().toLowerCase(), ze);
             }
 
             // 1. 读取 container.xml → 找到 OPF 路径
-            String opfPath = parseContainer(zipFile, lcEntryMap)
+            String opfPath = parseContainer(zipFile, lcEntryMap);
             if (opfPath == null) {
                 Log.e(TAG, "找不到 container.xml");
-                return result
+                return result;
             }
 
             // 2. 解析 OPF → 获取元数据、文件清单、spine 顺序
             String opfDir = opfPath.substring(0, opfPath.lastIndexOf('/') + 1);
-            parseOpf(zipFile, opfPath, opfDir, result)
+            parseOpf(zipFile, opfPath, opfDir, result);
 
             // 3. 解析 NCX → 获取章节标题映射
-            Map<String, String> ncxTitles = parseNcx(zipFile, opfDir, result, lcEntryMap)
+            Map<String, String> ncxTitles = parseNcx(zipFile, opfDir, result, lcEntryMap);
 
             // 4. 按 spine 顺序读取内容并提取图片（传入映射表避免遍历）
-            parseSpineContent(zipFile, opfDir, result, ncxTitles, lcEntryMap)
+            parseSpineContent(zipFile, opfDir, result, ncxTitles, lcEntryMap);
 
             // 5. 书名后备
             if (result.title == null || result.title.isEmpty()) {
-                result.title = file.getName()
+                result.title = file.getName();
                 if (result.title.endsWith(".epub") || result.title.endsWith(".EPUB")) {
-                    result.title = result.title.substring(0, result.title.length() - 5)
+                    result.title = result.title.substring(0, result.title.length() - 5);
                 }
             }
 
             // 6. 从 ZIP 提取所有图片字节到 result.images
-                        extractAllImageBytes(zipFile, result)
+                        extractAllImageBytes(zipFile, result);
 
                         Log.i(TAG, "解析完成: " + result.title + ", " + result.chapters.size() + "章, 图片=" + (result.images != null ? result.images.size() : 0));
                         com.einkreader.ui.reader.DebugLog.log("Epub", "解析完成: " + result.title + " " + result.chapters.size() + "章 作者=" + result.author + " 图片=" + (result.images != null ? result.images.size() : 0));
                     } finally {
             if (zipFile != null) try { zipFile.close(); } catch (IOException e) { }
         }
-        return result
+        return result;
     }
 
     // ==================== Container / OPF / NCX 解析 ====================
 
     private static String parseContainer(ZipFile zipFile, Map<String, ZipEntry> lcEntryMap) throws IOException {
         ZipEntry entry = lcEntryMap.get("meta-inf/container.xml");
-        if (entry == null) return null
-        InputStream is = null
+        if (entry == null) return null;
+        InputStream is = null;
         try {
-            is = zipFile.getInputStream(entry)
-            XmlPullParserFactory factory = XmlPullParserFactory.newInstance()
-            factory.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
-            XmlPullParser parser = factory.newPullParser()
+            is = zipFile.getInputStream(entry);
+            XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+            factory.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false);
+            XmlPullParser parser = factory.newPullParser();
             parser.setInput(is, "UTF-8");
             while (parser.getEventType() != XmlPullParser.END_DOCUMENT) {
                 if (parser.getEventType() == XmlPullParser.START_TAG
@@ -213,91 +213,91 @@ companion object {
                     if (fullPath == null) {
                         // 也可能属性名本身带 namespace 前缀
                         for (int ai = 0; ai < parser.getAttributeCount(); ai++) {
-                            String attrName = parser.getAttributeName(ai)
+                            String attrName = parser.getAttributeName(ai);
                             if (attrName != null && attrName.endsWith("full-path")) {
-                                fullPath = parser.getAttributeValue(ai)
-                                break
+                                fullPath = parser.getAttributeValue(ai);
+                                break;
                             }
                         }
                     }
-                    if (fullPath != null) return fullPath.trim()
+                    if (fullPath != null) return fullPath.trim();
                 }
-                parser.next()
+                parser.next();
             }
         } catch (Exception e) {
             Log.e(TAG, "解析 container.xml 失败", e);
         } finally {
             if (is != null) try { is.close(); } catch (IOException e) { }
         }
-        return null
+        return null;
     }
 
     private static void parseOpf(ZipFile zipFile, String opfPath, String opfDir, EpubResult result) throws IOException {
-        ZipEntry entry = zipFile.getEntry(opfPath)
-        if (entry == null) return
+        ZipEntry entry = zipFile.getEntry(opfPath);
+        if (entry == null) return;
 
-        Map<String, String> manifest = new HashMap<String, String>()
-        List<String> spineIds = new ArrayList<String>()
+        Map<String, String> manifest = new HashMap<String, String>();
+        List<String> spineIds = new ArrayList<String>();
 
-        InputStream is = null
+        InputStream is = null;
         try {
-            is = zipFile.getInputStream(entry)
-            XmlPullParserFactory factory = XmlPullParserFactory.newInstance()
-            factory.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
-            XmlPullParser parser = factory.newPullParser()
+            is = zipFile.getInputStream(entry);
+            XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+            factory.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false);
+            XmlPullParser parser = factory.newPullParser();
             parser.setInput(is, "UTF-8");
 
-            boolean inMetadata = false, inManifest = false, inSpine = false
+            boolean inMetadata = false, inManifest = false, inSpine = false;
             while (parser.getEventType() != XmlPullParser.END_DOCUMENT) {
                 switch (parser.getEventType()) {
                     case XmlPullParser.START_TAG:
-                        String tag = parser.getName()
+                        String tag = parser.getName();
                         if ("metadata".equalsIgnoreCase(tag)) inMetadata = true;
                         else if ("manifest".equalsIgnoreCase(tag)) inManifest = true;
                         else if ("spine".equalsIgnoreCase(tag)) inSpine = true;
                         else if (inMetadata && "title".equalsIgnoreCase(tag))
-                            result.title = readText(parser)
+                            result.title = readText(parser);
                         else if (inMetadata && "creator".equalsIgnoreCase(tag))
-                            result.author = readText(parser)
+                            result.author = readText(parser);
                         else if (inManifest && "item".equalsIgnoreCase(tag)) {
                             String id = parser.getAttributeValue(null, "id");
                             String href = parser.getAttributeValue(null, "href");
                             String mediaType = parser.getAttributeValue(null, "media-type");
                             if (id != null && href != null) {
-                                manifest.put(id, href)
+                                manifest.put(id, href);
                                 // 记录 NCX 路径：加上 opfDir 前缀，便于后续直接定位
                                 if (mediaType != null && (mediaType.contains("dtbncx") || mediaType.contains("ncx"))) {
-                                    String fullHref = href
-                                    if (!fullHref.startsWith(opfDir)) fullHref = opfDir + fullHref
-                                    if (result.ncxHref == null) result.ncxHref = fullHref
+                                    String fullHref = href;
+                                    if (!fullHref.startsWith(opfDir)) fullHref = opfDir + fullHref;
+                                    if (result.ncxHref == null) result.ncxHref = fullHref;
                                 }
                                 // EPUB3 nav.xhtml（properties="nav"）作为兜底
                                 String properties = parser.getAttributeValue(null, "properties");
                                 if (properties != null && properties.equalsIgnoreCase("nav")) {
-                                    String fullHref = href
-                                    if (!fullHref.startsWith(opfDir)) fullHref = opfDir + fullHref
-                                    if (result.navXhtmlHref == null) result.navXhtmlHref = fullHref
+                                    String fullHref = href;
+                                    if (!fullHref.startsWith(opfDir)) fullHref = opfDir + fullHref;
+                                    if (result.navXhtmlHref == null) result.navXhtmlHref = fullHref;
                                 }
                             }
                         } else if (inSpine && "itemref".equalsIgnoreCase(tag)) {
                             String idref = parser.getAttributeValue(null, "idref");
-                            if (idref != null) spineIds.add(idref)
+                            if (idref != null) spineIds.add(idref);
                         }
-                        break
+                        break;
                     case XmlPullParser.END_TAG:
-                        String endTag = parser.getName()
+                        String endTag = parser.getName();
                         if ("metadata".equalsIgnoreCase(endTag)) inMetadata = false;
                         else if ("manifest".equalsIgnoreCase(endTag)) inManifest = false;
                         else if ("spine".equalsIgnoreCase(endTag)) inSpine = false;
-                        break
+                        break;
                 }
-                parser.next()
+                parser.next();
             }
 
             // 将 spine id 列表转换为实际文件路径
             for (String id : spineIds) {
-                String href = manifest.get(id)
-                if (href != null) result.spineOrder.add(href)
+                String href = manifest.get(id);
+                if (href != null) result.spineOrder.add(href);
             }
         } catch (Exception e) {
             Log.e(TAG, "解析 OPF 失败", e);
@@ -307,48 +307,48 @@ companion object {
     }
 
     private static Map<String, String> parseNcx(ZipFile zipFile, String opfDir, EpubResult result, Map<String, ZipEntry> lcEntryMap) {
-        Map<String, String> ncxTitles = new HashMap<String, String>()
+        Map<String, String> ncxTitles = new HashMap<String, String>();
 
         // 找 NCX 文件：先看 manifest 声明（已用 opfDir 拼接路径），没有则查映射表
-        String ncxHref = result.ncxHref
-        String ncxPath = null
+        String ncxHref = result.ncxHref;
+        String ncxPath = null;
         if (ncxHref != null && !ncxHref.isEmpty()
                 && (ncxHref.toLowerCase().endsWith(".ncx") || ncxHref.contains("ncx"))) {
-            ncxPath = ncxHref.startsWith(opfDir) ? ncxHref : opfDir + ncxHref
+            ncxPath = ncxHref.startsWith(opfDir) ? ncxHref : opfDir + ncxHref;
         }
         if (ncxPath == null) {
             // ★ 使用映射表快速查找 .ncx 文件
             for (Map.Entry<String, ZipEntry> e : lcEntryMap.entrySet()) {
                 if (e.getKey().endsWith(".ncx")) {
-                    ncxPath = e.getValue().getName()
-                    break
+                    ncxPath = e.getValue().getName();
+                    break;
                 }
             }
         }
 
         // 优先解析 NCX（EPUB2）
         if (ncxPath != null) {
-            parseNcxXml(zipFile, ncxPath, ncxTitles)
+            parseNcxXml(zipFile, ncxPath, ncxTitles);
         }
 
         // ★ EPUB3 兜底：很多 EPUB3 只有 nav.xhtml（内含 <nav epub:type="toc">）
         if (ncxTitles.isEmpty()) {
-            String navHref = result.navXhtmlHref
+            String navHref = result.navXhtmlHref;
             if ((navHref == null || navHref.isEmpty()) && opfDir != null) {
                 navHref = opfDir + "nav.xhtml";
                 if (zipFile.getEntry(navHref) == null) {
-                    navHref = null
+                    navHref = null;
                 }
             }
             if (navHref != null) {
-                parseEpub3NavFallback(zipFile, navHref, ncxTitles, lcEntryMap)
+                parseEpub3NavFallback(zipFile, navHref, ncxTitles, lcEntryMap);
             } else {
                 // 最后兜底：扫描 ZIP 找任意可能的 nav/toc xhtml
-                parseEpub3NavFallback(zipFile, null, ncxTitles, lcEntryMap)
+                parseEpub3NavFallback(zipFile, null, ncxTitles, lcEntryMap);
             }
         }
 
-        return ncxTitles
+        return ncxTitles;
     }
 
     /**
@@ -364,74 +364,74 @@ companion object {
      */
     private static void parseNcxXml(ZipFile zipFile, String ncxPath,
                                     Map<String, String> ncxTitles) {
-        ZipEntry ncxEntry = zipFile.getEntry(ncxPath)
-        if (ncxEntry == null) return
-        InputStream is = null
+        ZipEntry ncxEntry = zipFile.getEntry(ncxPath);
+        if (ncxEntry == null) return;
+        InputStream is = null;
         try {
-            is = zipFile.getInputStream(ncxEntry)
-            XmlPullParserFactory factory = XmlPullParserFactory.newInstance()
-            factory.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
-            XmlPullParser parser = factory.newPullParser()
+            is = zipFile.getInputStream(ncxEntry);
+            XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+            factory.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false);
+            XmlPullParser parser = factory.newPullParser();
             parser.setInput(is, "UTF-8");
 
             // 栈：每一层存储 [currentSrc, currentLabel]
-            List<String[]> stack = new ArrayList<String[]>()
-            String currentSrc = null
-            String currentLabel = null
-            boolean inNavlabel = false
-            boolean inText = false
+            List<String[]> stack = new ArrayList<String[]>();
+            String currentSrc = null;
+            String currentLabel = null;
+            boolean inNavlabel = false;
+            boolean inText = false;
 
             while (parser.getEventType() != XmlPullParser.END_DOCUMENT) {
-                int event = parser.getEventType()
+                int event = parser.getEventType();
                 if (event == XmlPullParser.START_TAG) {
-                    String tag = parser.getName()
+                    String tag = parser.getName();
                     if ("navpoint".equalsIgnoreCase(tag)) {
-                        stack.add(new String[]{null, null})
-                        currentSrc = null
-                        currentLabel = null
+                        stack.add(new String[]{null, null});
+                        currentSrc = null;
+                        currentLabel = null;
                     } else if ("content".equalsIgnoreCase(tag)) {
                         currentSrc = parser.getAttributeValue(null, "src");
                         // 同时更新栈顶
-                        if (!stack.isEmpty()) stack.get(stack.size() - 1)[0] = currentSrc
+                        if (!stack.isEmpty()) stack.get(stack.size() - 1)[0] = currentSrc;
                     } else if ("navlabel".equalsIgnoreCase(tag)) {
-                        inNavlabel = true
+                        inNavlabel = true;
                     } else if (inNavlabel && "text".equalsIgnoreCase(tag)) {
-                        inText = true
-                        String text = readNcxText(parser)
-                        inText = false
+                        inText = true;
+                        String text = readNcxText(parser);
+                        inText = false;
                         if (text != null && !text.trim().isEmpty()) {
-                            currentLabel = text.trim()
-                            if (!stack.isEmpty()) stack.get(stack.size() - 1)[1] = currentLabel
+                            currentLabel = text.trim();
+                            if (!stack.isEmpty()) stack.get(stack.size() - 1)[1] = currentLabel;
                         }
                     }
                 } else if (event == XmlPullParser.END_TAG) {
-                    String endTag = parser.getName()
+                    String endTag = parser.getName();
                     if ("navlabel".equalsIgnoreCase(endTag)) {
-                        inNavlabel = false
+                        inNavlabel = false;
                     } else if ("navpoint".equalsIgnoreCase(endTag)) {
                         if (!stack.isEmpty()) {
-                            String[] top = stack.remove(stack.size() - 1)
+                            String[] top = stack.remove(stack.size() - 1);
                             int depth = stack.size() + 1; // 刚退出后的层级
-                            String src = top[0]
-                            String label = top[1]
+                            String src = top[0];
+                            String label = top[1];
 
                             if (depth == 1) {
                                 // ★ 退出顶层 navpoint：提交
-                                commitNcxTitle(ncxTitles, src, label)
+                                commitNcxTitle(ncxTitles, src, label);
                             } else {
                                 // 嵌套层：若父层还没有 src/label，则继承它
                                 if (!stack.isEmpty()) {
-                                    String[] parent = stack.get(stack.size() - 1)
-                                    if (parent[0] == null && src != null) parent[0] = src
-                                    if (parent[1] == null && label != null) parent[1] = label
+                                    String[] parent = stack.get(stack.size() - 1);
+                                    if (parent[0] == null && src != null) parent[0] = src;
+                                    if (parent[1] == null && label != null) parent[1] = label;
                                 }
                             }
                         }
-                        currentSrc = null
-                        currentLabel = null
+                        currentSrc = null;
+                        currentLabel = null;
                     }
                 }
-                parser.next()
+                parser.next();
             }
         } catch (Exception e) {
             Log.e(TAG, "解析 NCX 失败", e);
@@ -444,16 +444,16 @@ companion object {
      * 提交 NCX 标题条目：去锚点、去 ./ 前缀、trim 空白
      */
     private static void commitNcxTitle(Map<String, String> ncxTitles, String src, String label) {
-        if (src == null || label == null) return
-        String href = src
+        if (src == null || label == null) return;
+        String href = src;
         int hashIdx = href.indexOf('#');
-        if (hashIdx > 0) href = href.substring(0, hashIdx)
+        if (hashIdx > 0) href = href.substring(0, hashIdx);
         if (href.startsWith("./")) href = href.substring(2);
-        String trimmed = label.trim()
+        String trimmed = label.trim();
         if (!href.isEmpty() && !trimmed.isEmpty()) {
             // 只保留第一个（避免被嵌套子项或重复覆盖）
             if (!ncxTitles.containsKey(href)) {
-                ncxTitles.put(href, trimmed)
+                ncxTitles.put(href, trimmed);
             }
         }
     }
@@ -467,104 +467,104 @@ companion object {
     private static void parseEpub3NavFallback(ZipFile zipFile, String navHref,
                                               Map<String, String> ncxTitles,
                                               Map<String, ZipEntry> lcEntryMap) {
-        ZipEntry navEntry = null
+        ZipEntry navEntry = null;
         if (navHref != null) {
-            navEntry = lcEntryMap.get(navHref.toLowerCase())
+            navEntry = lcEntryMap.get(navHref.toLowerCase());
         }
         if (navEntry == null) {
             // ★ 使用映射表快速查找 nav/toc xhtml
             for (Map.Entry<String, ZipEntry> e : lcEntryMap.entrySet()) {
-                String key = e.getKey()
+                String key = e.getKey();
                 if ((key.endsWith(".xhtml") || key.endsWith(".html"))
                         && (key.contains("nav") || key.contains("toc"))) {
-                    navEntry = e.getValue()
-                    break
+                    navEntry = e.getValue();
+                    break;
                 }
             }
         }
-        if (navEntry == null) return
+        if (navEntry == null) return;
 
-        InputStream is = null
+        InputStream is = null;
         try {
-            is = zipFile.getInputStream(navEntry)
-            XmlPullParserFactory factory = XmlPullParserFactory.newInstance()
-            factory.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
-            XmlPullParser parser = factory.newPullParser()
+            is = zipFile.getInputStream(navEntry);
+            XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
+            factory.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false);
+            XmlPullParser parser = factory.newPullParser();
             parser.setInput(is, "UTF-8");
 
             // 使用栈跟踪每个 <li> 的当前 <a href> 与累计文本
-            java.util.List<String[]> liStack = new java.util.ArrayList<String[]>()
-            String currentHref = null
-            StringBuilder currentText = new StringBuilder()
+            java.util.List<String[]> liStack = new java.util.ArrayList<String[]>();
+            String currentHref = null;
+            StringBuilder currentText = new StringBuilder();
             int inTocNav = 0; // 标记是否在 type="toc" 的 <nav> 内
-            String navType = null
+            String navType = null;
 
             while (parser.getEventType() != XmlPullParser.END_DOCUMENT) {
-                int ev = parser.getEventType()
+                int ev = parser.getEventType();
                 if (ev == XmlPullParser.START_TAG) {
-                    String tag = parser.getName()
+                    String tag = parser.getName();
                     if ("nav".equalsIgnoreCase(tag)) {
                         String type = parser.getAttributeValue("http://www.idpf.org/2007/ops", "type");
                         if (type == null) type = parser.getAttributeValue(null, "epub:type");
                         if (type == null) {
                             for (int ai = 0; ai < parser.getAttributeCount(); ai++) {
-                                String an = parser.getAttributeName(ai)
+                                String an = parser.getAttributeName(ai);
                                 if (an != null && an.endsWith("type")) {
-                                    type = parser.getAttributeValue(ai)
-                                    break
+                                    type = parser.getAttributeValue(ai);
+                                    break;
                                 }
                             }
                         }
-                        navType = (type != null) ? type.toLowerCase() : null
+                        navType = (type != null) ? type.toLowerCase() : null;
                         if ("toc".equals(navType)) inTocNav = 1;
                     } else if (inTocNav > 0 && "li".equalsIgnoreCase(tag)) {
-                        liStack.add(new String[]{null, null})
-                        currentHref = null
-                        currentText.setLength(0)
+                        liStack.add(new String[]{null, null});
+                        currentHref = null;
+                        currentText.setLength(0);
                     } else if (inTocNav > 0 && "a".equalsIgnoreCase(tag)) {
                         currentHref = parser.getAttributeValue(null, "href");
                         if (!liStack.isEmpty()) {
-                            String[] top = liStack.get(liStack.size() - 1)
-                            top[0] = currentHref
+                            String[] top = liStack.get(liStack.size() - 1);
+                            top[0] = currentHref;
                         }
-                        currentText.setLength(0)
+                        currentText.setLength(0);
                     }
                 } else if (ev == XmlPullParser.TEXT) {
                     if (inTocNav > 0) {
-                        String txt = parser.getText()
-                        if (txt != null) currentText.append(txt)
+                        String txt = parser.getText();
+                        if (txt != null) currentText.append(txt);
                     }
                 } else if (ev == XmlPullParser.END_TAG) {
-                    String endTag = parser.getName()
+                    String endTag = parser.getName();
                     if ("nav".equalsIgnoreCase(endTag)) {
                         if ("toc".equals(navType)) inTocNav = 0;
-                        navType = null
+                        navType = null;
                     } else if (inTocNav > 0 && "li".equalsIgnoreCase(endTag)) {
                         if (!liStack.isEmpty()) {
-                            String[] top = liStack.remove(liStack.size() - 1)
-                            String src = top[0] != null ? top[0] : currentHref
-                            String label = currentText.toString().trim()
+                            String[] top = liStack.remove(liStack.size() - 1);
+                            String src = top[0] != null ? top[0] : currentHref;
+                            String label = currentText.toString().trim();
                             if (!liStack.isEmpty()) {
                                 // 非顶层 li：把 src/label 合并回父层（若父层为空）
-                                String[] parent = liStack.get(liStack.size() - 1)
-                                if (parent[0] == null && src != null) parent[0] = src
+                                String[] parent = liStack.get(liStack.size() - 1);
+                                if (parent[0] == null && src != null) parent[0] = src;
                                 if ((parent[1] == null || parent[1].isEmpty()) && !label.isEmpty()) {
-                                    parent[1] = label
+                                    parent[1] = label;
                                 }
                             } else {
                                 // 顶层 li 退出 → 提交
-                                commitNcxTitle(ncxTitles, src, label)
+                                commitNcxTitle(ncxTitles, src, label);
                             }
                         }
                     } else if (inTocNav > 0 && "a".equalsIgnoreCase(endTag)) {
                         if (!liStack.isEmpty()) {
-                            String[] top = liStack.get(liStack.size() - 1)
-                            String label = currentText.toString().trim()
-                            top[1] = label
+                            String[] top = liStack.get(liStack.size() - 1);
+                            String label = currentText.toString().trim();
+                            top[1] = label;
                         }
                     }
                 }
-                parser.next()
+                parser.next();
             }
         } catch (Exception e) {
             Log.w(TAG, "EPUB3 nav fallback failed: " + e.getMessage());
@@ -575,11 +575,11 @@ companion object {
 
     private static String readNcxText(XmlPullParser parser) throws Exception {
         while (parser.getEventType() != XmlPullParser.END_DOCUMENT) {
-            int event = parser.next()
-            if (event == XmlPullParser.TEXT) return parser.getText()
+            int event = parser.next();
+            if (event == XmlPullParser.TEXT) return parser.getText();
             else if (event == XmlPullParser.END_TAG && "text".equalsIgnoreCase(parser.getName())) break;
         }
-        return null
+        return null;
     }
 
     // ==================== 内容解析（含图片提取） ====================
@@ -588,67 +588,67 @@ companion object {
                                           EpubResult result, Map<String, String> ncxTitles,
                                           Map<String, ZipEntry> lcEntryMap) throws IOException {
         // ★ 使用独立计数器保证章节 index 连续
-        int chapterIndex = 0
+        int chapterIndex = 0;
         for (int i = 0; i < result.spineOrder.size(); i++) {
-            String href = result.spineOrder.get(i)
-            String entryPath = opfDir + href
+            String href = result.spineOrder.get(i);
+            String entryPath = opfDir + href;
 
             // ★ spine 路径多种尝试（全部使用 lcEntryMap 的 O(1) 小写查找）
-            ZipEntry entry = null
+            ZipEntry entry = null;
             // 1. 原样（小写映射表）
-            entry = lcEntryMap.get(entryPath.toLowerCase())
+            entry = lcEntryMap.get(entryPath.toLowerCase());
             // 2. URL 解码
             if (entry == null) {
                 try { entry = lcEntryMap.get(java.net.URLDecoder.decode(entryPath, "UTF-8").toLowerCase()); } catch (Exception e) { }
             }
             // 3. 去掉 ./
             if (entry == null && entryPath.startsWith("./")) {
-                entry = lcEntryMap.get(entryPath.substring(2).toLowerCase())
+                entry = lcEntryMap.get(entryPath.substring(2).toLowerCase());
             }
             // 4. 路径规范化 + 安全检查（防止 ZIP Slip）
             if (entry == null) {
                 try {
                     String[] parts = (opfDir + "/" + href).split("/");
-                    java.util.ArrayList<String> stack = new java.util.ArrayList<String>()
+                    java.util.ArrayList<String> stack = new java.util.ArrayList<String>();
                     for (String p : parts) {
                         if (p.isEmpty() || p.equals(".")) continue;
                         if (p.equals("..")) {
-                            if (!stack.isEmpty()) stack.remove(stack.size() - 1)
-                            continue
+                            if (!stack.isEmpty()) stack.remove(stack.size() - 1);
+                            continue;
                         }
-                        stack.add(p)
+                        stack.add(p);
                     }
-                    StringBuilder norm = new StringBuilder()
+                    StringBuilder norm = new StringBuilder();
                     for (int si = 0; si < stack.size(); si++) {
                         if (si > 0) norm.append('/');
-                        norm.append(stack.get(si))
+                        norm.append(stack.get(si));
                     }
-                    String normalizedPath = norm.toString()
+                    String normalizedPath = norm.toString();
                     if (normalizedPath.startsWith(opfDir)) {
-                        entry = lcEntryMap.get(normalizedPath.toLowerCase())
+                        entry = lcEntryMap.get(normalizedPath.toLowerCase());
                     }
                 } catch (Exception e) { }
             }
             // 5. ★ 不区分大小写（利用映射表已小写化的键，尝试文件名匹配）
             if (entry == null) {
-                String targetName = href
+                String targetName = href;
                 int ls = targetName.lastIndexOf('/');
-                if (ls >= 0) targetName = targetName.substring(ls + 1)
-                String targetLower = targetName.toLowerCase()
+                if (ls >= 0) targetName = targetName.substring(ls + 1);
+                String targetLower = targetName.toLowerCase();
                 for (Map.Entry<String, ZipEntry> e : lcEntryMap.entrySet()) {
-                    String zeName = e.getValue().getName()
+                    String zeName = e.getValue().getName();
                     int zs = zeName.lastIndexOf('/');
-                    String zeFile = (zs >= 0) ? zeName.substring(zs + 1) : zeName
+                    String zeFile = (zs >= 0) ? zeName.substring(zs + 1) : zeName;
                     if (zeFile.equalsIgnoreCase(targetName) || zeFile.equalsIgnoreCase(targetLower)) {
-                        entry = e.getValue()
-                        break
+                        entry = e.getValue();
+                        break;
                     }
                 }
             }
 
             // 读取 XHTML 内容并提取图片
-            ContentWithImages contentWithImages = readXhtmlWithImages(zipFile, entry, opfDir)
-            String content = contentWithImages.text
+            ContentWithImages contentWithImages = readXhtmlWithImages(zipFile, entry, opfDir);
+            String content = contentWithImages.text;
             // ★ 限制每章内容最大 500KB（防止大文件 OOM）
             if (content != null && content.length() > 500000) {
                 content = content.substring(0, 500000) + "\n\n……(篇幅受限)……";
@@ -657,30 +657,30 @@ companion object {
             if (content == null) content = "";
 
             // 确定标题
-            String title = null
+            String title = null;
             if (ncxTitles != null) {
                 // ★ 改进匹配：尝试多种路径格式
                 // 1. 原样匹配
-                title = ncxTitles.get(href)
+                title = ncxTitles.get(href);
                 // 2. URL 解码后匹配
                 if (title == null) {
                     try { title = ncxTitles.get(java.net.URLDecoder.decode(href, "UTF-8")); } catch (Exception e) { }
                 }
                 // 3. 去掉 ../ 前缀
                 if (title == null && href.startsWith("../"))
-                    title = ncxTitles.get(href.substring(3))
+                    title = ncxTitles.get(href.substring(3));
                 if (title == null && href.startsWith("./"))
-                    title = ncxTitles.get(href.substring(2))
+                    title = ncxTitles.get(href.substring(2));
                 // 4. URL 解码再去掉前缀
                 if (title == null && href.startsWith("../")) {
                     try { title = ncxTitles.get(java.net.URLDecoder.decode(href.substring(3), "UTF-8")); } catch (Exception e) { }
                 }
                 // 5. 只匹配文件名
                 if (title == null) {
-                    String nameOnly = href
+                    String nameOnly = href;
                     int ls = nameOnly.lastIndexOf('/');
-                    if (ls >= 0) nameOnly = nameOnly.substring(ls + 1)
-                    title = ncxTitles.get(nameOnly)
+                    if (ls >= 0) nameOnly = nameOnly.substring(ls + 1);
+                    title = ncxTitles.get(nameOnly);
                     // URL 解码文件名再试
                     if (title == null) {
                         try { title = ncxTitles.get(java.net.URLDecoder.decode(nameOnly, "UTF-8")); } catch (Exception e) { }
@@ -688,24 +688,24 @@ companion object {
                 }
                 // 6. 不区分大小写匹配文件名
                 if (title == null) {
-                    String nameLower = href.toLowerCase()
+                    String nameLower = href.toLowerCase();
                     int ls = nameLower.lastIndexOf('/');
-                    if (ls >= 0) nameLower = nameLower.substring(ls + 1)
+                    if (ls >= 0) nameLower = nameLower.substring(ls + 1);
                     for (String key : ncxTitles.keySet()) {
-                        String keyName = key
+                        String keyName = key;
                         int ks = keyName.lastIndexOf('/');
-                        if (ks >= 0) keyName = keyName.substring(ks + 1)
+                        if (ks >= 0) keyName = keyName.substring(ks + 1);
                         if (keyName.equalsIgnoreCase(nameLower)) {
-                            title = ncxTitles.get(key)
-                            break
+                            title = ncxTitles.get(key);
+                            break;
                         }
                     }
                 }
-                if (title != null) title = title.trim()
+                if (title != null) title = title.trim();
                 // 5. 如果标题是 "Chapter 1" 之类的英文，也保留
             }
             if (title == null || title.isEmpty()) {
-                title = extractTitleFromHref(href, i)
+                title = extractTitleFromHref(href, i);
             }
 
             // ★ 从原始 HTML 的 <h1>/<h2> 提取标题，替换后备文件名或不完整的 NCX 标题
@@ -716,37 +716,37 @@ companion object {
                     || title.matches("(?i)^(chapter|chap|ch|section|sec|part)\\s*\\d+$")
                     || title.matches("第[零一二三四五六七八九十百千万亿\\d]+[章节回卷集篇部]"));
                 if (isFallback) {
-                    title = contentWithImages.rawTitle
+                    title = contentWithImages.rawTitle;
                 }
             }
             // ★ 跳过无内容的 chapter_X 假章节
             if (title != null && REGEX_FAKE_CHAPTER.matcher(title).matches()) {
-                continue
+                continue;
             }
             // ★ 跳过内容重复的章节（同名不同 index 的情况）
             if (!result.chapters.isEmpty()) {
-                Chapter lastCh = result.chapters.get(result.chapters.size() - 1)
+                Chapter lastCh = result.chapters.get(result.chapters.size() - 1);
                 if (content.equals(lastCh.getContent())) {
-                    continue
+                    continue;
                 }
             }
             // 最终保底：标题不应为空
             if (title == null || title.isEmpty()) {
-                title = extractTitleFromHref(href, i)
+                title = extractTitleFromHref(href, i);
             }
-            Chapter chapter = new Chapter(title, content)
-            chapter.setIndex(chapterIndex++)
+            Chapter chapter = new Chapter(title, content);
+            chapter.setIndex(chapterIndex++);
             // ★ 设置段落类型
             if (contentWithImages.paraTypes != null && !contentWithImages.paraTypes.isEmpty()) {
-                chapter.setParagraphTypes(contentWithImages.paraTypes)
+                chapter.setParagraphTypes(contentWithImages.paraTypes);
             }
             // ★ 设置图片路径
             if (contentWithImages.imagePaths != null && !contentWithImages.imagePaths.isEmpty()) {
                 for (String imgPath : contentWithImages.imagePaths) {
-                    chapter.addImagePath(imgPath)
+                    chapter.addImagePath(imgPath);
                 }
             }
-            result.chapters.add(chapter)
+            result.chapters.add(chapter);
         }
     }
 
@@ -755,26 +755,26 @@ companion object {
      * 返回：清理后的文本 + 图片路径列表 + 图片数据
      */
     private static ContentWithImages readXhtmlWithImages(ZipFile zipFile, ZipEntry entry, String opfDir) throws IOException {
-        ContentWithImages result = new ContentWithImages()
+        ContentWithImages result = new ContentWithImages();
 
-        InputStream is = null
-        BufferedReader reader = null
+        InputStream is = null;
+        BufferedReader reader = null;
         try {
-            is = zipFile.getInputStream(entry)
+            is = zipFile.getInputStream(entry);
 
             // 检测编码：用 BufferedInputStream 的 mark/reset 避免关闭后重新打开
             String encoding = "UTF-8";
             if (is.markSupported()) {
-                is.mark(4096)
+                is.mark(4096);
             } else {
-                is = new BufferedInputStream(is, 4096)
-                is.mark(4096)
+                is = new BufferedInputStream(is, 4096);
+                is.mark(4096);
             }
-            byte[] firstBytes = new byte[2048]
-            int readCount = is.read(firstBytes)
+            byte[] firstBytes = new byte[2048];
+            int readCount = is.read(firstBytes);
             if (readCount > 0) {
                 String header = new String(firstBytes, 0, Math.min(readCount, 500), "ISO-8859-1");
-                String lower = header.toLowerCase()
+                String lower = header.toLowerCase();
                 // ★ I-6: 扩展编码检测覆盖范围
                 if (lower.contains("charset=gbk") || lower.contains("charset=gb2312") || lower.contains("charset=gb18030"))
                     encoding = "GBK";
@@ -787,25 +787,25 @@ companion object {
                 else if (lower.contains("charset=euc-jp"))
                     encoding = "EUC-JP";
             }
-            is.reset()
-            reader = new BufferedReader(new InputStreamReader(is, encoding))
+            is.reset();
+            reader = new BufferedReader(new InputStreamReader(is, encoding));
 
             // 读取全部 HTML
-            StringBuilder rawHtml = new StringBuilder(4096)
-            String line
+            StringBuilder rawHtml = new StringBuilder(4096);
+            String line;
             while ((line = reader.readLine()) != null) {
                 rawHtml.append(line).append("\n");
             }
-            reader.close(); reader = null
-            is.close(); is = null
+            reader.close(); reader = null;
+            is.close(); is = null;
 
-            String html = rawHtml.toString()
+            String html = rawHtml.toString();
 
             // ★ 从原始 HTML 提取标题（正则搜索 <h1>/<h2>/<title>）
-            result.rawTitle = extractTitleFromHtml(html)
+            result.rawTitle = extractTitleFromHtml(html);
 
             // ★ 提取图片 + 清理 HTML
-            result.text = cleanHtmlAndExtractImages(html, opfDir, result)
+            result.text = cleanHtmlAndExtractImages(html, opfDir, result);
 
         } catch (Exception e) {
             Log.e(TAG, "读取 XHTML 失败", e);
@@ -815,20 +815,20 @@ companion object {
             if (is != null) try { is.close(); } catch (IOException e) { }
         }
 
-        return result
+        return result;
     }
 
     /**
      * 存储：清理后的文本
      */
-    class ContentWithImages {
+    static class ContentWithImages {
         String text = "";
         /** 从原始 HTML 中提取的标题（从 <h1>/<h2>/<title> 标签获取） */
-        String rawTitle
+        String rawTitle;
         /** ★ 从 <img> 标签中提取的图片路径列表（相对 EPUB ZIP 根目录） */
-        final List<String> imagePaths = new ArrayList<String>()
+        final List<String> imagePaths = new ArrayList<String>();
         /** 每个段落的类型（对应 text 按 \n 分割后的段落） */
-        List<Integer> paraTypes = new ArrayList<Integer>()
+        List<Integer> paraTypes = new ArrayList<Integer>();
     }
 
     /**
@@ -837,80 +837,80 @@ companion object {
     private static String cleanHtmlAndExtractImages(String html, String opfDir, ContentWithImages result) {
         if (html == null || html.isEmpty()) return "";
 
-        StringBuilder out = new StringBuilder(html.length())
-        int len = html.length()
+        StringBuilder out = new StringBuilder(html.length());
+        int len = html.length();
 
         int state = 0;           // 0=文本, 1=在标签内, 2=在跳过标签内, 3=在注释内, 4=在CDATA内
-        String skipTagName = null
-        StringBuilder tagNameBuf = new StringBuilder()
-        boolean tagNameDone = false
-        boolean tagIsClosing = false
+        String skipTagName = null;
+        StringBuilder tagNameBuf = new StringBuilder();
+        boolean tagNameDone = false;
+        boolean tagIsClosing = false;
 
         // 当前标签的完整字符串（用于提取 img 的属性）
-        StringBuilder currentTagContent = new StringBuilder()
+        StringBuilder currentTagContent = new StringBuilder();
 
         // ★ 段落类型跟踪
-        int currentParaType = com.einkreader.core.model.Chapter.PARA_NORMAL
-        int commentStartPos = -1
+        int currentParaType = com.einkreader.core.model.Chapter.PARA_NORMAL;
+        int commentStartPos = -1;
 
         // ★ 初始段落标记（给第一个 block 前的文本）
         out.append(PARA_MARKER_PREFIX).append((char)('0' + currentParaType)).append(PARA_MARKER_SUFFIX);
 
         for (int i = 0; i < len; i++) {
-            char c = html.charAt(i)
+            char c = html.charAt(i);
 
             // 状态3：HTML 注释 <!-- ... -->，完全跳过
             if (state == 3) {
                 if (c == '-' && i + 2 < len && html.charAt(i + 1) == '-' && html.charAt(i + 2) == '>') {
-                    i += 2
-                    state = 0
-                    commentStartPos = -1
+                    i += 2;
+                    state = 0;
+                    commentStartPos = -1;
                 } else if (commentStartPos >= 0 && i - commentStartPos > MAX_COMMENT_SPAN) {
                     // ★ 注释超过最大跨度，视为未闭合，强制恢复
                     Log.w(TAG, "HTML 注释超过 " + MAX_COMMENT_SPAN + " 字符仍未闭合，强制恢复");
-                    state = 0
-                    commentStartPos = -1
+                    state = 0;
+                    commentStartPos = -1;
                 }
-                continue
+                continue;
             }
 
             // 状态4：CDATA 节 <![CDATA[ ... ]]>，完全跳过
             if (state == 4) {
                 if (c == ']' && i + 2 < len && html.charAt(i + 1) == ']' && html.charAt(i + 2) == '>') {
-                    i += 2
-                    state = 0
+                    i += 2;
+                    state = 0;
                 }
-                continue
+                continue;
             }
 
             // 状态2：在 style/script/head 中，跳过
             if (state == 2) {
                 if (c == '<' && i + 1 < len && html.charAt(i + 1) == '/' && skipTagName != null) {
-                    int closeStart = i + 2
-                    boolean match = true
+                    int closeStart = i + 2;
+                    boolean match = true;
                     for (int k = 0; k < skipTagName.length() && closeStart + k < len; k++) {
                         if (Character.toLowerCase(html.charAt(closeStart + k)) != skipTagName.charAt(k)) {
-                            match = false; break
+                            match = false; break;
                         }
                     }
                     if (match) {
                         int gt = html.indexOf('>', closeStart + skipTagName.length());
                         if (gt != -1) {
-                            i = gt
-                            state = 0
-                            skipTagName = null
+                            i = gt;
+                            state = 0;
+                            skipTagName = null;
                         }
                     }
                 }
-                continue
+                continue;
             }
 
             // 状态1：在标签内
             if (state == 1) {
-                currentTagContent.append(c)
+                currentTagContent.append(c);
                 if (c == '>') {
-                    String tagName = tagNameBuf.toString().toLowerCase()
-                    String tagContent = currentTagContent.toString()
+                    String tagName = tagNameBuf.toString().toLowerCase();
+                    String tagContent = currentTagContent.toString();
 
                     // 处理 <br> 和块级标签 → 换行
                     // ★ 用内联标记记录段落类型：只在块级闭合时记录类型标记，
@@ -919,11 +919,11 @@ companion object {
                         out.append('\n');
                     } else if (tagName.equals("img")) {
                                             // ★ 从 <img> 标签提取 src 属性，解析为绝对路径，存入图片列表
-                                            String src = extractSrcFromTag(tagContent)
+                                            String src = extractSrcFromTag(tagContent);
                                             if (src != null && !src.isEmpty()) {
-                                                String resolved = resolveImagePath(opfDir, src)
+                                                String resolved = resolveImagePath(opfDir, src);
                                                 if (resolved != null) {
-                                                    result.imagePaths.add(resolved)
+                                                    result.imagePaths.add(resolved);
                                                     // ★ 在文本中插入 [[IMAGE:path]] 标记，ReaderView 据此渲染图片
                                                     out.append("[[IMAGE:").append(resolved).append("]]");
                                                 }
@@ -932,103 +932,103 @@ companion object {
                                         } else if (!tagIsClosing && BLOCK_TAGS.contains(tagName)) {
                         // 块级标签开启：换行 + 设置新段落类型
                         out.append('\n');
-                        currentParaType = getParagraphType(tagName)
+                        currentParaType = getParagraphType(tagName);
                     } else if (tagIsClosing && BLOCK_TAGS.contains(tagName)) {
                         // 块级标签闭合：记录当前段落的类型标记，重置类型
                         out.append(PARA_MARKER_PREFIX).append((char)('0' + currentParaType)).append(PARA_MARKER_SUFFIX);
-                        currentParaType = com.einkreader.core.model.Chapter.PARA_NORMAL
+                        currentParaType = com.einkreader.core.model.Chapter.PARA_NORMAL;
                     }
 
                     // 跳过标签检测
                     if (!tagIsClosing && SKIP_TAGS.contains(tagName)) {
-                        state = 2
-                        skipTagName = tagName
+                        state = 2;
+                        skipTagName = tagName;
                     } else {
-                        state = 0
+                        state = 0;
                     }
-                    tagNameBuf.setLength(0)
-                    tagNameDone = false
-                    tagIsClosing = false
-                    currentTagContent = new StringBuilder()
+                    tagNameBuf.setLength(0);
+                    tagNameDone = false;
+                    tagIsClosing = false;
+                    currentTagContent = new StringBuilder();
                 } else {
                     if (!tagNameDone) {
                         if (c == '/' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                            tagNameDone = true
+                            tagNameDone = true;
                         } else {
-                            tagNameBuf.append(c)
+                            tagNameBuf.append(c);
                         }
                     }
                     if (c == '/' && tagNameBuf.length() == 0 && !tagIsClosing && i > 0 && html.charAt(i-1) == '<') {
-                        tagIsClosing = true
+                        tagIsClosing = true;
                     }
                 }
-                continue
+                continue;
             }
 
             // 状态0：正常文本
             if (c == '<') {
                 // 检查 HTML 注释 <!--
                 if (i + 3 < len && html.charAt(i + 1) == '!' && html.charAt(i + 2) == '-' && html.charAt(i + 3) == '-') {
-                    state = 3
-                    commentStartPos = i
-                    i += 3
-                    continue
+                    state = 3;
+                    commentStartPos = i;
+                    i += 3;
+                    continue;
                 }
                 // 检查 CDATA <![CDATA[
                 if (i + 8 < len && html.charAt(i + 1) == '!' && html.charAt(i + 2) == '['
                         && html.charAt(i + 3) == 'C' && html.charAt(i + 4) == 'D'
                         && html.charAt(i + 5) == 'A' && html.charAt(i + 6) == 'T'
                         && html.charAt(i + 7) == 'A' && html.charAt(i + 8) == '[') {
-                    state = 4
-                    i += 8
-                    continue
+                    state = 4;
+                    i += 8;
+                    continue;
                 }
-                state = 1
-                tagNameBuf.setLength(0)
-                tagNameDone = false
-                tagIsClosing = false
-                currentTagContent = new StringBuilder()
-                currentTagContent.append(c)
-                continue
+                state = 1;
+                tagNameBuf.setLength(0);
+                tagNameDone = false;
+                tagIsClosing = false;
+                currentTagContent = new StringBuilder();
+                currentTagContent.append(c);
+                continue;
             }
 
             // HTML 实体解码
             if (c == '&') {
                 int semi = html.indexOf(';', i);
                 if (semi != -1 && semi - i <= 12) {
-                    String entity = html.substring(i + 1, semi)
-                    String decoded = decodeEntity(entity)
+                    String entity = html.substring(i + 1, semi);
+                    String decoded = decodeEntity(entity);
                     if (decoded != null) {
-                        out.append(decoded)
-                        i = semi
-                        continue
+                        out.append(decoded);
+                        i = semi;
+                        continue;
                     }
                 }
-                out.append(c)
-                continue
+                out.append(c);
+                continue;
             }
 
             // 普通字符
             if (c != '\r') {
-                out.append(c)
+                out.append(c);
             }
         }
 
         // ★ 从文本中提取段落类型标记，构建 paraTypes，然后剥离标记
-        result.paraTypes.clear()
-        StringBuilder cleaned = new StringBuilder(out.length())
-        int len2 = out.length()
+        result.paraTypes.clear();
+        StringBuilder cleaned = new StringBuilder(out.length());
+        int len2 = out.length();
         for (int i = 0; i < len2; i++) {
-            char c = out.charAt(i)
+            char c = out.charAt(i);
             if (c == PARA_MARKER_PREFIX && i + 2 < len2 && out.charAt(i + 2) == PARA_MARKER_SUFFIX) {
                 int type = out.charAt(i + 1) - '0';
-                result.paraTypes.add(type)
-                i += 2
-                continue
+                result.paraTypes.add(type);
+                i += 2;
+                continue;
             }
-            cleaned.append(c)
+            cleaned.append(c);
         }
-        String resultText = cleaned.toString()
+        String resultText = cleaned.toString();
 
         // 最终清理多余空行（使用预编译 Pattern）
         resultText = REGEX_NL_3PLUS.matcher(resultText).replaceAll("\n\n");
@@ -1037,18 +1037,18 @@ companion object {
         resultText = REGEX_TRAIL_SPACE_NL.matcher(resultText).replaceAll("\n");
         // ★ 清理全角空格（U+3000）：逐个段落处理，去除段首/段尾的全角空格
         String[] rawParas = resultText.split("\n", -1);
-        StringBuilder fixed = new StringBuilder(resultText.length())
+        StringBuilder fixed = new StringBuilder(resultText.length());
         for (int i = 0; i < rawParas.length; i++) {
-            String p = rawParas[i]
+            String p = rawParas[i];
             // 段首全角空格
             p = REGEX_LEADING_FULLWIDTH.matcher(p).replaceAll("");
             // 段尾全角空格
             p = REGEX_TRAILING_FULLWIDTH.matcher(p).replaceAll("");
             if (i > 0) fixed.append('\n');
-            fixed.append(p)
+            fixed.append(p);
         }
-        resultText = fixed.toString()
-        resultText = resultText.trim()
+        resultText = fixed.toString();
+        resultText = resultText.trim();
 
         // ★ 对齐 paraTypes 与最终段落数：trim 删除了前导空段，对应标记从列表头部移除
         String[] paras = resultText.split("\n", -1);
@@ -1056,56 +1056,56 @@ companion object {
             result.paraTypes.remove(0);  // 优先移除前导标记（trim 导致的空段）
         }
         while (result.paraTypes.size() < paras.length) {
-            result.paraTypes.add(com.einkreader.core.model.Chapter.PARA_NORMAL)
+            result.paraTypes.add(com.einkreader.core.model.Chapter.PARA_NORMAL);
         }
-        return resultText
+        return resultText;
     }
 
     /** 从原始 HTML 中正则提取标题（搜索 <h1>/<h2>/<h3>，不搜 <title> 因为它通常是文件名） */
     private static String extractTitleFromHtml(String html) {
-        if (html == null || html.isEmpty()) return null
+        if (html == null || html.isEmpty()) return null;
         String[] tags = {"h1", "h2", "h3"};
         for (String tag : tags) {
             String regex = "(?i)<" + tag + "(?:\\s[^>]*)?>(.*?)</" + tag + "\\s*>";
             java.util.regex.Pattern pattern =
-                    java.util.regex.Pattern.compile(regex, java.util.regex.Pattern.DOTALL)
-            java.util.regex.Matcher matcher = pattern.matcher(html)
+                    java.util.regex.Pattern.compile(regex, java.util.regex.Pattern.DOTALL);
+            java.util.regex.Matcher matcher = pattern.matcher(html);
             if (matcher.find()) {
                 String candidate = matcher.group(1)
                         .replaceAll("<[^>]*>", "")
-                        .trim()
+                        .trim();
                 if (!candidate.isEmpty() && candidate.length() < 200) {
-                    return candidate
+                    return candidate;
                 }
             }
         }
-        return null
+        return null;
     }
 
     /** 根据标签名返回段落类型 */
     private static int getParagraphType(String tagName) {
-        String t = tagName.toLowerCase()
+        String t = tagName.toLowerCase();
         if (t.equals("h1")) return com.einkreader.core.model.Chapter.PARA_H1;
         if (t.equals("h2")) return com.einkreader.core.model.Chapter.PARA_H2;
         if (t.equals("h3") || t.equals("h4") || t.equals("h5") || t.equals("h6"))
-            return com.einkreader.core.model.Chapter.PARA_H3
+            return com.einkreader.core.model.Chapter.PARA_H3;
         if (t.equals("blockquote") || t.equals("quote"))
-            return com.einkreader.core.model.Chapter.PARA_BLOCKQUOTE
-        return com.einkreader.core.model.Chapter.PARA_NORMAL
+            return com.einkreader.core.model.Chapter.PARA_BLOCKQUOTE;
+        return com.einkreader.core.model.Chapter.PARA_NORMAL;
     }
 
     /** 解码 HTML 实体 */
     private static String decodeEntity(String entity) {
-        if (entity == null || entity.isEmpty()) return null
+        if (entity == null || entity.isEmpty()) return null;
         if (entity.startsWith("#")) {
             try {
-                int codepoint
+                int codepoint;
                 if (entity.charAt(1) == 'x' || entity.charAt(1) == 'X')
-                    codepoint = Integer.parseInt(entity.substring(2), 16)
+                    codepoint = Integer.parseInt(entity.substring(2), 16);
                 else
-                    codepoint = Integer.parseInt(entity.substring(1))
+                    codepoint = Integer.parseInt(entity.substring(1));
                 if (codepoint > 0 && codepoint <= Character.MAX_CODE_POINT)
-                    return String.valueOf(Character.toChars(codepoint))
+                    return String.valueOf(Character.toChars(codepoint));
             } catch (NumberFormatException e) { return null; }
         }
         if ("amp".equals(entity)) return "&";
@@ -1129,38 +1129,38 @@ companion object {
         if ("emsp".equals(entity)) return "\u2003";
         if ("ensp".equals(entity)) return "\u2002";
         if ("thinsp".equals(entity)) return "\u2009";
-        return null
+        return null;
     }
 
     /** 从文件名提取章节标题 */
     private static String extractTitleFromHref(String href, int index) {
-        String name = href
+        String name = href;
         int lastSlash = name.lastIndexOf('/');
-        if (lastSlash >= 0) name = name.substring(lastSlash + 1)
+        if (lastSlash >= 0) name = name.substring(lastSlash + 1);
         // 去掉锚点 # 部分
         int hashIdx = name.indexOf('#');
-        if (hashIdx >= 0) name = name.substring(0, hashIdx)
+        if (hashIdx >= 0) name = name.substring(0, hashIdx);
         int dotIndex = name.lastIndexOf('.');
-        if (dotIndex > 0) name = name.substring(0, dotIndex)
+        if (dotIndex > 0) name = name.substring(0, dotIndex);
 
         // 纯数字文件名 -> 转换为中文章节编号
         if (name.matches("\\d+")) {
             try {
-                int num = Integer.parseInt(name)
+                int num = Integer.parseInt(name);
                 return "第" + num + "章";
             } catch (NumberFormatException e) { }
         }
 
         // 英文前缀 chapter/chap/ch/section/part/... 去重
-        String lower = name.toLowerCase()
+        String lower = name.toLowerCase();
         lower = REGEX_LEADING_CHAP.matcher(lower).replaceFirst("");
         lower = REGEX_TRAILING_SEP.matcher(lower).replaceFirst("");
         if (!lower.isEmpty() && !lower.equals(name.toLowerCase())) {
             try {
-                int num = Integer.parseInt(lower)
+                int num = Integer.parseInt(lower);
                 return "第" + num + "章";
             } catch (NumberFormatException e) {
-                name = lower
+                name = lower;
             }
         }
 
@@ -1186,32 +1186,32 @@ companion object {
                 return "索引";
             if (name.matches("(?i)^(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module)\\s*\\d+$")) {
                 // 英文 "chapter 1" 风格，保留
-                return capitalizeFirst(name)
+                return capitalizeFirst(name);
             }
             // 常见中文章节前缀 "第X章 / 第X节 / 第X卷 / 第X回 / 第X集 / 第X篇 / 第X部"
             if (name.matches("第[零一二三四五六七八九十百千万亿\\d]+[章节回卷集篇部篇]?")) {
-                return name
+                return name;
             }
-            return name
+            return name;
         }
         return "第" + (index + 1) + "章";
     }
 
     private static String capitalizeFirst(String s) {
-        if (s == null || s.isEmpty()) return s
-        return Character.toUpperCase(s.charAt(0)) + s.substring(1)
+        if (s == null || s.isEmpty()) return s;
+        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
     }
 
     private static String readText(XmlPullParser parser) throws Exception {
-        StringBuilder sb = new StringBuilder()
-        int depth = 1
+        StringBuilder sb = new StringBuilder();
+        int depth = 1;
         while (depth > 0) {
-            int event = parser.next()
-            if (event == XmlPullParser.TEXT) sb.append(parser.getText())
-            else if (event == XmlPullParser.START_TAG) depth++
-            else if (event == XmlPullParser.END_TAG) depth--
+            int event = parser.next();
+            if (event == XmlPullParser.TEXT) sb.append(parser.getText());
+            else if (event == XmlPullParser.START_TAG) depth++;
+            else if (event == XmlPullParser.END_TAG) depth--;
         }
-        return sb.toString().trim()
+        return sb.toString().trim();
     }
 
     // ==================== 缓存机制 ====================
@@ -1221,87 +1221,87 @@ companion object {
     }
 
     private static File getCacheDir(File epubFile) {
-        if (sCacheBaseDir != null && sCacheBaseDir.exists()) return sCacheBaseDir
-        File cacheDir = new File(epubFile.getParentFile(), CACHE_DIR_NAME)
-        if (!cacheDir.exists()) cacheDir.mkdirs()
-        return cacheDir
+        if (sCacheBaseDir != null && sCacheBaseDir.exists()) return sCacheBaseDir;
+        File cacheDir = new File(epubFile.getParentFile(), CACHE_DIR_NAME);
+        if (!cacheDir.exists()) cacheDir.mkdirs();
+        return cacheDir;
     }
 
     private static File getCacheFile(File epubFile) {
         String cacheName = epubFile.getName() + "_" + epubFile.length() + ".cache";
-        return new File(getCacheDir(epubFile), cacheName)
+        return new File(getCacheDir(epubFile), cacheName);
     }
 
     // ★ 缓存版本号 v4：移除图片 Base64，改为仅存路径，旧缓存自动失效重建
     private static final String CACHE_VERSION = "v4";
 
     private static EpubResult readCache(File file) {
-        File cacheFile = getCacheFile(file)
-        if (!cacheFile.exists()) return null
-        BufferedReader reader = null
+        File cacheFile = getCacheFile(file);
+        if (!cacheFile.exists()) return null;
+        BufferedReader reader = null;
         try {
             reader = new BufferedReader(new InputStreamReader(new FileInputStream(cacheFile), "UTF-8"));
-            String cachedKey = reader.readLine()
-            if (!getCacheKey(file).equals(cachedKey)) return null
-            String version = reader.readLine()
+            String cachedKey = reader.readLine();
+            if (!getCacheKey(file).equals(cachedKey)) return null;
+            String version = reader.readLine();
             if (!CACHE_VERSION.equals(version)) {
                 // 旧版缓存格式，强制重新解析
-                return null
+                return null;
             }
-            String title = unescapeFromCache(reader.readLine())
-            String author = unescapeFromCache(reader.readLine())
-            int chapterCount = Integer.parseInt(reader.readLine().trim())
-            EpubResult result = new EpubResult()
-            result.title = title
-            result.author = author
+            String title = unescapeFromCache(reader.readLine());
+            String author = unescapeFromCache(reader.readLine());
+            int chapterCount = Integer.parseInt(reader.readLine().trim());
+            EpubResult result = new EpubResult();
+            result.title = title;
+            result.author = author;
             for (int i = 0; i < chapterCount; i++) {
-                String chTitle = unescapeFromCache(reader.readLine())
-                int contentLen = Integer.parseInt(reader.readLine().trim())
+                String chTitle = unescapeFromCache(reader.readLine());
+                int contentLen = Integer.parseInt(reader.readLine().trim());
                 // ★ I-4: 限制单章内容最大 500KB，防止 OOM
                 if (contentLen > 500000) {
                     Log.w(TAG, "缓存单章内容过大 (" + contentLen + ")，跳过");
-                    return null
+                    return null;
                 }
-                char[] buf = new char[contentLen]
-                int read = 0
-                int maxRetries = 0
+                char[] buf = new char[contentLen];
+                int read = 0;
+                int maxRetries = 0;
                 while (read < contentLen && maxRetries < 3) {
-                    int n = reader.read(buf, read, contentLen - read)
-                    if (n < 0) break
-                    read += n
-                    if (n == 0) maxRetries++; else maxRetries = 0
+                    int n = reader.read(buf, read, contentLen - read);
+                    if (n < 0) break;
+                    read += n;
+                    if (n == 0) maxRetries++; else maxRetries = 0;
                 }
-                String content = new String(buf, 0, read)
-                Chapter chapter = new Chapter(chTitle, content)
-                chapter.setIndex(i)
+                String content = new String(buf, 0, read);
+                Chapter chapter = new Chapter(chTitle, content);
+                chapter.setIndex(i);
                 // ★ 读取段落类型列表
-                List<Integer> paraTypes = new ArrayList<Integer>()
-                int ptCount = Integer.parseInt(reader.readLine().trim())
+                List<Integer> paraTypes = new ArrayList<Integer>();
+                int ptCount = Integer.parseInt(reader.readLine().trim());
                 for (int p = 0; p < ptCount; p++) {
-                    paraTypes.add(Integer.parseInt(reader.readLine().trim()))
+                    paraTypes.add(Integer.parseInt(reader.readLine().trim()));
                 }
-                chapter.setParagraphTypes(paraTypes)
+                chapter.setParagraphTypes(paraTypes);
                 // ★ 读取图片路径列表
-                int imgCount = Integer.parseInt(reader.readLine().trim())
+                int imgCount = Integer.parseInt(reader.readLine().trim());
                 for (int ip = 0; ip < imgCount; ip++) {
-                    chapter.addImagePath(unescapeFromCache(reader.readLine()))
+                    chapter.addImagePath(unescapeFromCache(reader.readLine()));
                 }
-                result.chapters.add(chapter)
+                result.chapters.add(chapter);
             }
-            return result
+            return result;
         } catch (Exception e) {
             Log.w(TAG, "缓存读取失败", e);
-            return null
+            return null;
         } finally {
             if (reader != null) try { reader.close(); } catch (IOException e) { }
         }
     }
 
     private static void writeCache(File file, EpubResult result) {
-        if (result == null || result.chapters == null || result.chapters.isEmpty()) return
-        File cacheFile = getCacheFile(file)
+        if (result == null || result.chapters == null || result.chapters.isEmpty()) return;
+        File cacheFile = getCacheFile(file);
         File tmpFile = new File(cacheFile.getAbsolutePath() + ".tmp");
-        OutputStreamWriter writer = null
+        OutputStreamWriter writer = null;
         try {
             writer = new OutputStreamWriter(new FileOutputStream(tmpFile), "UTF-8");
             writer.write(getCacheKey(file) + "\n");
@@ -1314,28 +1314,28 @@ companion object {
                 writer.write(escapeForCache(ch.getTitle() != null ? ch.getTitle() : "") + "\n");
                 String content = ch.getContent() != null ? ch.getContent() : "";
                 writer.write(content.length() + "\n");
-                writer.write(content)
+                writer.write(content);
                 // ★ 写入段落类型列表
-                List<Integer> paraTypes = ch.getParagraphTypes()
-                int ptCount = (paraTypes == null) ? 0 : paraTypes.size()
+                List<Integer> paraTypes = ch.getParagraphTypes();
+                int ptCount = (paraTypes == null) ? 0 : paraTypes.size();
                 writer.write(ptCount + "\n");
                 for (int p = 0; p < ptCount; p++) {
                     writer.write(paraTypes.get(p) + "\n");
                 }
                 // ★ 写入图片路径列表
-                List<String> imgPaths = ch.getImagePaths()
-                int imgCount = (imgPaths == null) ? 0 : imgPaths.size()
+                List<String> imgPaths = ch.getImagePaths();
+                int imgCount = (imgPaths == null) ? 0 : imgPaths.size();
                 writer.write(imgCount + "\n");
                 for (int ip = 0; ip < imgCount; ip++) {
                     writer.write(escapeForCache(imgPaths.get(ip)) + "\n");
                 }
             }
-            writer.flush(); writer.close(); writer = null
-            if (cacheFile.exists()) cacheFile.delete()
-            tmpFile.renameTo(cacheFile)
+            writer.flush(); writer.close(); writer = null;
+            if (cacheFile.exists()) cacheFile.delete();
+            tmpFile.renameTo(cacheFile);
         } catch (Exception e) {
             Log.w(TAG, "缓存写入失败", e);
-            if (tmpFile.exists()) tmpFile.delete()
+            if (tmpFile.exists()) tmpFile.delete();
         } finally {
             if (writer != null) try { writer.close(); } catch (IOException e) { }
         }
@@ -1361,61 +1361,61 @@ companion object {
 
     /** 从 <img src="..."> 标签内容中提取 src 属性值 */
     private static String extractSrcFromTag(String tagContent) {
-        if (tagContent == null || tagContent.isEmpty()) return null
+        if (tagContent == null || tagContent.isEmpty()) return null;
         int srcIdx = tagContent.toLowerCase().indexOf("src=");
-        if (srcIdx == -1) return null
+        if (srcIdx == -1) return null;
         int start = tagContent.indexOf('"', srcIdx + 4);
         if (start == -1) start = tagContent.indexOf('\'', srcIdx + 4);
-        if (start == -1) return null
-        start++
+        if (start == -1) return null;
+        start++;
         int end = tagContent.indexOf('"', start);
         if (end == -1) end = tagContent.indexOf('\'', start);
-        if (end == -1) return null
-        return tagContent.substring(start, end)
+        if (end == -1) return null;
+        return tagContent.substring(start, end);
     }
 
     /** 将相对图片路径解析为 ZIP 内的绝对路径 */
         private static String resolveImagePath(String opfDir, String relativeSrc) {
-            if (relativeSrc == null || relativeSrc.isEmpty()) return null
-            String combined = opfDir + relativeSrc
+            if (relativeSrc == null || relativeSrc.isEmpty()) return null;
+            String combined = opfDir + relativeSrc;
             return combined.replace("\\", "/").replace("./", "");
         }
 
         /** 从 ZIP 中读取所有所需图片的原始字节并填充到 result.images */
         private static void extractAllImageBytes(ZipFile zipFile, EpubResult result) {
-            if (result == null) return
-            if (result.chapters == null || result.chapters.isEmpty()) return
+            if (result == null) return;
+            if (result.chapters == null || result.chapters.isEmpty()) return;
             // 收集所有章节引用的图片路径
-            java.util.Set<String> allPaths = new java.util.HashSet<String>()
+            java.util.Set<String> allPaths = new java.util.HashSet<String>();
             for (Chapter ch : result.chapters) {
-                List<String> paths = ch.getImagePaths()
+                List<String> paths = ch.getImagePaths();
                 if (paths != null) {
-                    allPaths.addAll(paths)
+                    allPaths.addAll(paths);
                 }
             }
             if (allPaths.isEmpty()) {
                 Log.d(TAG, "无图片需要提取");
-                return
+                return;
             }
             Log.d(TAG, "提取图片字节: " + allPaths.size() + " 张");
             for (String path : allPaths) {
                 String normalized = path.replace('\\', '/');
-                ZipEntry entry = zipFile.getEntry(normalized)
+                ZipEntry entry = zipFile.getEntry(normalized);
                 if (entry == null && normalized.startsWith("./")) {
-                    normalized = normalized.substring(2)
-                    entry = zipFile.getEntry(normalized)
+                    normalized = normalized.substring(2);
+                    entry = zipFile.getEntry(normalized);
                 }
                 if (entry != null) {
-                    InputStream is = null
+                    InputStream is = null;
                     try {
-                        is = zipFile.getInputStream(entry)
-                        ByteArrayOutputStream bos = new ByteArrayOutputStream((int) Math.max(entry.getSize(), 4096))
-                        byte[] buf = new byte[8192]
-                        int len
+                        is = zipFile.getInputStream(entry);
+                        ByteArrayOutputStream bos = new ByteArrayOutputStream((int) Math.max(entry.getSize(), 4096));
+                        byte[] buf = new byte[8192];
+                        int len;
                         while ((len = is.read(buf)) != -1) {
-                            bos.write(buf, 0, len)
+                            bos.write(buf, 0, len);
                         }
-                        result.images.put(normalized, bos.toByteArray())
+                        result.images.put(normalized, bos.toByteArray());
                     } catch (IOException e) {
                         Log.w(TAG, "读取图片失败: " + normalized, e);
                     } finally {
@@ -1429,13 +1429,13 @@ companion object {
 
         /** 验证是否为有效的 EPUB 文件 */
     public static boolean isValidEpub(File file) {
-        if (file == null || !file.exists()) return false
+        if (file == null || !file.exists()) return false;
         if (!file.getName().toLowerCase().endsWith(".epub")) return false;
-        ZipFile zipFile = null
+        ZipFile zipFile = null;
         try {
-            zipFile = new ZipFile(file)
+            zipFile = new ZipFile(file);
             return zipFile.getEntry("META-INF/container.xml") != null;
-        } catch (IOException e) { return false
+        } catch (IOException e) { return false;
         } finally {
             if (zipFile != null) try { zipFile.close(); } catch (IOException e) { }
         }

@@ -34,26 +34,26 @@ import java.util.Map
  * ★ v2: 分页计算在后台 HandlerThread 执行（主线程捕获尺寸后传入，不阻塞 UI）
  *   使用 layoutVersion 递增丢弃过期结果
  */
-class ReaderView extends View {
+public class ReaderView extends View {
 
     // ==================== 排版设置 ====================
-    private var textSize =  26f
-    private var lineSpacing =  1.5f
-    private var paragraphSpacing =  1.8f
-    private var typeface =  Typeface.DEFAULT
-    private var bgColor =  Color.WHITE
-    private var fgColor =  Color.BLACK
-    private var mutedColor =  0xFF999999
-    private var paddingLeft =  20
-    private var paddingRight =  20
-    private var paddingTop =  16
-    private var paddingBottom =  16
+    private float textSize = 26f
+    private float lineSpacing = 1.5f
+    private float paragraphSpacing = 1.8f
+    private Typeface typeface = Typeface.DEFAULT
+    private int bgColor = Color.WHITE
+    private volatile int fgColor = Color.BLACK
+    private int mutedColor = 0xFF999999
+    private int paddingLeft = 20
+    private int paddingRight = 20
+    private int paddingTop = 16
+    private int paddingBottom = 16
 
     // ==================== 分页数据 ====================
-    val pages = ArrayList<Page>()
-    private var currentPage =  0
+    private List<Page> pages = new ArrayList<Page>()
+    private int currentPage = 0
     private Chapter currentChapter
-    private var totalPages =  0
+    private int totalPages = 0
 
     // ==================== 图片数据 ====================
     private Map<String, byte[]> chapterImages
@@ -64,13 +64,13 @@ class ReaderView extends View {
     private HandlerThread layoutThread
     private Handler backgroundHandler
     private final Handler mainHandler = new Handler(Looper.getMainLooper())
-    private var layoutVersion =  0
+    private volatile int layoutVersion = 0
 
         // ==================== 监听器 ====================
         private OnPageChangeListener pageChangeListener
-        private var isLayoutReady =  false
-        private var enableFirstLineIndent =  false
-        private var batchMode =  false
+        private boolean isLayoutReady = false
+        private boolean enableFirstLineIndent = false
+        private boolean batchMode = false
 
         // ==================== E Ink 刷新管理 ====================
         private EinkRefreshManager refreshManager
@@ -87,19 +87,19 @@ class ReaderView extends View {
     private static final int ZONE_MENU = 2
 
     // ==================== 防抖 ====================
-    private var lastPageChangeTime =  0
+    private long lastPageChangeTime = 0
     private static final long PAGE_DEBOUNCE_MS = 250L
-    private var downX =  0, downY = 0
-    private var lastZone =  ZONE_MENU
+    private float downX = 0, downY = 0
+    private int lastZone = ZONE_MENU
 
     // ==================== 分页数据模型 ====================
 
-    class Page {
+    static class Page {
         List<TextLine> lines = new ArrayList<TextLine>()
         List<ImageBlock> images = new ArrayList<ImageBlock>()
     }
 
-    class TextLine {
+    static class TextLine {
         String text
         float x, y
         float fontSize
@@ -114,7 +114,7 @@ class ReaderView extends View {
         }
     }
 
-    class ImageBlock {
+    static class ImageBlock {
         Bitmap bitmap
         Rect rect
         String path; // 图片路径，用于后台→UI 线程传递
@@ -162,7 +162,7 @@ class ReaderView extends View {
     private void init() {
         setBackgroundColor(bgColor)
         density = getResources().getDisplayMetrics().density
-        DebugLog.log("Init", "density=" + density);
+        DebugLog.log("Init", "density=" + density)
 
         float defaultDp = 10f, rightDp = 14f
         paddingLeft = (int)(defaultDp * density + 0.5f)
@@ -183,7 +183,7 @@ class ReaderView extends View {
         pageNumPaint.setTextSize(Constants.PAGE_NUMBER_TEXT_SIZE_SP * density)
         pageNumPaint.setTextAlign(Paint.Align.CENTER)
 
-        layoutThread = new HandlerThread("layout-bg");
+        layoutThread = new HandlerThread("layout-bg")
         layoutThread.start()
         backgroundHandler = new Handler(layoutThread.getLooper())
 
@@ -402,9 +402,9 @@ class ReaderView extends View {
 
         // 获取内容
         String content = chapter.getContent()
-        if (content == null) content = "";
+        if (content == null) content = ""
         content = content.trim()
-        if (content.isEmpty()) content = "(本章内容为空)";
+        if (content.isEmpty()) content = "(本章内容为空)"
 
                 // ===== Rust 布局分支（二进制路径，直接使用精确坐标） =====
                                 if (FeatureFlags.USE_RUST_LAYOUT) {
@@ -455,7 +455,7 @@ class ReaderView extends View {
                                                 decodeCurrentPageImages()
                                                 invalidate()
                                                 notifyPageChanged()
-                                                DebugLog.log("RustLayout", "totalPages=" + totalPages + " elapsedNs=" + rustResult.elapsedNs);
+                                                DebugLog.log("RustLayout", "totalPages=" + totalPages + " elapsedNs=" + rustResult.elapsedNs)
                                             }
                                         })
                                         return
@@ -473,7 +473,7 @@ class ReaderView extends View {
         float lineHeight = (float) Math.ceil(bpFm.descent - bpFm.ascent) * ls
         float paraSpacingPx = ts * dens * (ps - ls)
 
-        String[] paragraphs = content.split("\\n", -1);
+        String[] paragraphs = content.split("\\n", -1)
         List<Integer> paraTypes = chapter.getParagraphTypes()
 
         final List<Page> resultPages = new ArrayList<Page>()
@@ -581,7 +581,7 @@ class ReaderView extends View {
                         if (firstLine.length() < trimmed.length()) {
                             remaining = trimmed.substring(firstLine.length())
                         } else {
-                            remaining = "";
+                            remaining = ""
                         }
                         if (y + lineH > padT + contentHeight) {
                             resultPages.add(curPd)
@@ -697,7 +697,7 @@ class ReaderView extends View {
 
         StringBuilder cl = new StringBuilder()
         if (!isCjk) {
-            String[] words = text.split(" ", -1);
+            String[] words = text.split(" ", -1)
             for (String word : words) {
                 float ww = msw(word, p)
                 if (ww + TEXT_SAFETY_MARGIN > maxW) {
@@ -714,7 +714,7 @@ class ReaderView extends View {
                     }
                     continue
                 }
-                String tryL = cl.length() > 0 ? cl.toString() + " " + word : word;
+                String tryL = cl.length() > 0 ? cl.toString() + " " + word : word
                 if (msw(tryL, p) + TEXT_SAFETY_MARGIN > maxW && cl.length() > 0) {
                     lines.add(cl.toString()); cl.setLength(0); cl.append(word)
                 } else {
@@ -733,7 +733,7 @@ class ReaderView extends View {
             }
         }
         if (cl.length() > 0) lines.add(cl.toString())
-        if (lines.isEmpty()) lines.add("");
+        if (lines.isEmpty()) lines.add("")
         return lines
     }
 
@@ -750,7 +750,7 @@ class ReaderView extends View {
             if (currentChapter != null) {
                 textPaint.setTextSize(textSize * density)
                 textPaint.setColor(mutedColor)
-                String msg = "排版中...";
+                String msg = "排版中..."
                 canvas.drawText(msg, (getWidth() - textPaint.measureText(msg)) / 2f, getHeight() / 2f, textPaint)
                 textPaint.setColor(fgColor)
             }
@@ -777,15 +777,15 @@ class ReaderView extends View {
 
         if (totalPages > 0) {
             pageNumPaint.setColor(mutedColor)
-            canvas.drawText((currentPage + 1) + " / " + totalPages, getWidth() / 2f, getHeight() - 10, pageNumPaint);
+            canvas.drawText((currentPage + 1) + " / " + totalPages, getWidth() / 2f, getHeight() - 10, pageNumPaint)
         }
     }
 
     // ==================== 尺寸变化 ====================
 
-    private var layoutPending =  false
-    private var layoutGeneration =  0
-    private var lastMeasuredW =  0, lastMeasuredH = 0
+    private volatile boolean layoutPending = false
+    private int layoutGeneration = 0
+    private int lastMeasuredW = 0, lastMeasuredH = 0
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
@@ -897,7 +897,7 @@ class ReaderView extends View {
         if (getParent() instanceof View) ((View) getParent()).postInvalidate()
         invalidate()
     }
-    public void setOnPageChangeListener(OnPageChangeListener l) { this.pageChangeListener = l; }
+    public void setOnPageChangeListener(OnPageChangeListener l) { pageChangeListener = l; }
 
         private void notifyPageChanged() {
             if (pageChangeListener != null) pageChangeListener.onPageChanged(currentPage, totalPages)
@@ -919,17 +919,17 @@ class ReaderView extends View {
                 Bitmap scaled = Bitmap.createScaledBitmap(bmp, rw, rh, true)
                 if (scaled != bmp) bmp.recycle()
                 ib.bitmap = scaled
-                bitmapCache.put("img_" + System.nanoTime(), scaled);
+                bitmapCache.put("img_" + System.nanoTime(), scaled)
             }
         }
 
-        public void simulateLeftTap() {
+        fun simulateLeftTap() {
             if (currentPage > 0) prevPage()
-            else if (pageChangeListener != null) pageChangeListener.onNeedPrevChapter()
+            else if (this@ReaderView.pageChangeListener != null) this@ReaderView.pageChangeListener.onNeedPrevChapter()
         }
 
-        public void simulateRightTap() {
+        fun simulateRightTap() {
             if (currentPage < totalPages - 1) nextPage()
-            else if (pageChangeListener != null) pageChangeListener.onNeedNextChapter()
+            else if (this@ReaderView.pageChangeListener != null) this@ReaderView.pageChangeListener.onNeedNextChapter()
         }
     }
