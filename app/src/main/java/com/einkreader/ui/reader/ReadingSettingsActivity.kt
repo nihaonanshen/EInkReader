@@ -60,16 +60,16 @@ class ReadingSettingsActivity : Activity() {
         val seekHM = findViewById<SeekBar>(R.id.seek_horizontal_margin)
         val labelHM = findViewById<TextView>(R.id.label_horizontal_margin)
         val savedMargin = prefs.getInt("horizontal_margin", 10)
-        seekHM.setProgress(savedMargin)
+        seekHM.progress = savedMargin
         labelHM.text = savedMargin.toString()
         seekHM.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
-                var p = progress
+            override fun onProgressChanged(s: SeekBar, newProgress: Int, fromUser: Boolean) {
+                var p = newProgress
                 if (p < 10) p = 10
                 if (p > 60) p = 60
-                var progress = p
-                labelHM.text = progress.toString()
-                prefs.edit().putInt("horizontal_margin", progress).apply()
+                seekHM.progress = p
+                labelHM.text = p.toString()
+                prefs.edit().putInt("horizontal_margin", p).apply()
             }
             override fun onStartTrackingTouch(s: SeekBar) {}
             override fun onStopTrackingTouch(s: SeekBar) { setResult(RESULT_OK) }
@@ -103,11 +103,11 @@ class ReadingSettingsActivity : Activity() {
 
         // Line spacing seekbar
         seekLineSpacing.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
+            override fun onProgressChanged(s: SeekBar, progress: Int, fromUser: Boolean) {
                 var p = progress
                 if (p < 10) p = 10
                 if (p > 30) p = 30
-                var progress = p
+                seekLineSpacing.progress = p
                 labelLineSpacing.text = String.format("%.1f", progress / 10f)
                 prefs.edit().putInt("line_spacing", progress).apply()
             }
@@ -117,11 +117,11 @@ class ReadingSettingsActivity : Activity() {
 
         // Paragraph spacing seekbar
         seekParaSpacing.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar, p: Int, fromUser: Boolean) {
+            override fun onProgressChanged(s: SeekBar, progress: Int, fromUser: Boolean) {
                 var p = progress
                 if (p < 10) p = 10
                 if (p > 30) p = 30
-                var progress = p
+                seekParaSpacing.progress = p
                 labelParaSpacing.text = String.format("%.1f", progress / 10f)
                 prefs.edit().putInt("para_spacing", progress).apply()
             }

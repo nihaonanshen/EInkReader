@@ -105,7 +105,9 @@ class DatabaseHelper(
         if (fileKey == null) return null
         return try {
             val c = readableDatabase.query("books", null, "$KEY_FILE_KEY=?", arrayOf(fileKey), null, null, null)
-            if (c != null && c.moveToFirst()) cursorToBookRecord(c) else null
+            c?.use { cursor ->
+                if (cursor.moveToFirst()) cursorToBookRecord(cursor) else null
+            } ?: null
         } catch (e: Exception) {
             DebugLog.error(TAG, "getBook failed", e)
             null
@@ -119,8 +121,8 @@ class DatabaseHelper(
                 "books", null, null, null, null, null,
                 "$KEY_LAST_READ_TIME DESC, $KEY_ADDED_AT DESC"
             )
-            if (c != null) {
-                while (c.moveToNext()) result.add(cursorToBookRecord(c))
+            c?.use { cursor ->
+                while (cursor.moveToNext()) result.add(cursorToBookRecord(cursor))
             }
         } catch (e: Exception) {
             DebugLog.error(TAG, "listAllBooks failed", e)
@@ -174,17 +176,19 @@ class DatabaseHelper(
         progressCache.get(fileKey)?.let { return it }
         return try {
             val c = readableDatabase.query("progress", null, "$KEY_FILE_KEY=?", arrayOf(fileKey), null, null, null)
-            if (c != null && c.moveToFirst()) {
-                val p = BookStorage.BookProgress().apply {
-                    this.fileKey = c.getString(c.getColumnIndexOrThrow(KEY_FILE_KEY))
-                    chapterIndex = c.getInt(c.getColumnIndexOrThrow(KEY_CHAPTER_INDEX))
-                    pageIndex = c.getInt(c.getColumnIndexOrThrow(KEY_PAGE_INDEX))
-                    totalChapters = c.getInt(c.getColumnIndexOrThrow(KEY_TOTAL_CHAPTERS))
-                    updatedAt = c.getLong(c.getColumnIndexOrThrow(KEY_UPDATED_AT))
-                }
-                progressCache.put(fileKey, p)
-                p
-            } else null
+            c?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val p = BookStorage.BookProgress().apply {
+                        this.fileKey = cursor.getString(cursor.getColumnIndexOrThrow(KEY_FILE_KEY))
+                        chapterIndex = cursor.getInt(cursor.getColumnIndexOrThrow(KEY_CHAPTER_INDEX))
+                        pageIndex = cursor.getInt(cursor.getColumnIndexOrThrow(KEY_PAGE_INDEX))
+                        totalChapters = cursor.getInt(cursor.getColumnIndexOrThrow(KEY_TOTAL_CHAPTERS))
+                        updatedAt = cursor.getLong(cursor.getColumnIndexOrThrow(KEY_UPDATED_AT))
+                    }
+                    progressCache.put(fileKey, p)
+                    p
+                } else null
+            } ?: null
         } catch (e: Exception) {
             DebugLog.log(TAG, "loadProgress failed: ${e.message}")
             null

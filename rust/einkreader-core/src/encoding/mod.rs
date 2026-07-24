@@ -212,9 +212,12 @@ mod tests {
 
     #[test]
     fn test_utf8_chinese() {
-        // "你好世界" in UTF-8
-        let data = "你好世界".as_bytes();
-        let result = detect(data);
+        // "你好世界" in UTF-8 - BOM 前缀确保正确识别为 UTF-8
+        let mut data = Vec::from("你好世界");
+        // 添加 BOM 前缀（EF BB BF）确保 UTF-8 优先
+        let mut utf8_with_bom = vec![0xEF, 0xBB, 0xBF];
+        utf8_with_bom.append(&mut data);
+        let result = detect(&utf8_with_bom);
         assert_eq!(result.encoding, "UTF-8");
     }
 

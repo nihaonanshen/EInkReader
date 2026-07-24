@@ -41,7 +41,10 @@ class BookListAdapter(
         view.findViewById<TextView>(R.id.book_title).text = book.title
 
         val tvCover = view.findViewById<TextView>(R.id.book_cover)
-        if (rec != null && "epub".equals(rec.format, ignoreCase = true)) {
+        // ✅ [Phase 7] format 为 null 时从文件路径推断
+        val isEpub = (rec != null && "epub".equals(rec.format, ignoreCase = true)) ||
+                     (rec?.filePath != null && rec.filePath!!.lowercase().endsWith(".epub"))
+        if (isEpub) {
             tvCover.text = "EPUB"
             tvCover.setBackgroundColor(-0x46ab71.toInt())
         } else {

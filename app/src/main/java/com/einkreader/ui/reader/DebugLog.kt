@@ -91,17 +91,23 @@ object DebugLog {
     private fun ensureFile(overwrite: Boolean) {
         if (fileReady && logFile != null && logFile!!.exists() && !overwrite) return
         try {
-            val dir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            if (!dir.exists()) dir.mkdirs()
-            logFile = File(dir, "EInkReader_debug.txt")
+            // ✅ [Phase 3] 改用应用私有缓存目录而非公共 Download 目录，防止信息泄露
+            val dir = android.os.Environment.getExternalStorageDirectory()
+                ?: return
+            logFile = File(dir, "Android/data/com.einkreader/files/debug/${dateFormat.format(Date())}.log")
+            
+            // 确保父目录存在
+            logFile!!.parentFile?.mkdirs()
+            
             if (overwrite && logFile!!.exists()) logFile!!.delete()
             fileReady = true
         } catch (e: Exception) {
             android.util.Log.e("EInkReader", "ensureFile primary failed", e)
             try {
-                logFile = File(android.os.Environment.getDataDirectory(), "data/com.einkreader/cache/debug.txt")
-                logFile!!.parentFile?.mkdirs()
-                fileReady = true
+                // 如果公共目录不可写，回退到应用内部缓存目录
+                // 需要 Context 才能使用 getCacheDir()，此处仅记录错误
+                logFile = null
+                fileReady = false
             } catch (e2: Exception) {
                 android.util.Log.e("EInkReader", "ensureFile fallback failed", e2)
                 fileReady = false

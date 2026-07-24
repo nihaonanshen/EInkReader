@@ -11,7 +11,7 @@ class FeatureFlags {
         @JvmField var USE_RUST_EPUB_PARSER: Boolean = ENABLE_RUST
         @JvmField var USE_RUST_LAYOUT: Boolean = ENABLE_RUST
 
-        @JvmStatic fun isRustAvailable(): Boolean = NativeBridge.isLibraryLoaded()
+        @JvmStatic fun isRustAvailable(): Boolean = NativeBridge.sLibraryLoaded
         @JvmStatic fun useRustTxtParser(): Boolean = USE_RUST_TXT_PARSER && isRustAvailable()
         @JvmStatic fun useRustEpubParser(): Boolean = USE_RUST_EPUB_PARSER && isRustAvailable()
     }

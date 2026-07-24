@@ -123,7 +123,12 @@ public class EpubParser {
 
     public static EpubResult parse(File file) throws IOException {
         String lockKey = file.getAbsolutePath();
-        Object lock = sParseLocks.computeIfAbsent(lockKey, k -> new Object());
+        Object lock = sParseLocks.get(lockKey);
+        if (lock == null) {
+            Object newLock = new Object();
+            Object existing = sParseLocks.putIfAbsent(lockKey, newLock);
+            lock = (existing != null) ? existing : newLock;
+        }
         synchronized (lock) {
             try {
                 EpubResult cached = readCache(file);
@@ -1381,51 +1386,87 @@ public class EpubParser {
             return combined.replace("\\", "/").replace("./", "");
         }
 
-        /** 从 ZIP 中读取所有所需图片的原始字节并填充到 result.images */
-        private static void extractAllImageBytes(ZipFile zipFile, EpubResult result) {
-            if (result == null) return;
-            if (result.chapters == null || result.chapters.isEmpty()) return;
-            // 收集所有章节引用的图片路径
-            java.util.Set<String> allPaths = new java.util.HashSet<String>();
-            for (Chapter ch : result.chapters) {
-                List<String> paths = ch.getImagePaths();
-                if (paths != null) {
-                    allPaths.addAll(paths);
-                }
-            }
-            if (allPaths.isEmpty()) {
-                Log.d(TAG, "无图片需要提取");
-                return;
-            }
-            Log.d(TAG, "提取图片字节: " + allPaths.size() + " 张");
-            for (String path : allPaths) {
-                String normalized = path.replace('\\', '/');
-                ZipEntry entry = zipFile.getEntry(normalized);
-                if (entry == null && normalized.startsWith("./")) {
-                    normalized = normalized.substring(2);
-                    entry = zipFile.getEntry(normalized);
-                }
-                if (entry != null) {
-                    InputStream is = null;
-                    try {
-                        is = zipFile.getInputStream(entry);
-                        ByteArrayOutputStream bos = new ByteArrayOutputStream((int) Math.max(entry.getSize(), 4096));
-                        byte[] buf = new byte[8192];
-                        int len;
-                        while ((len = is.read(buf)) != -1) {
-                            bos.write(buf, 0, len);
+        /** 最大单个图片字节数：1MB */
+                private static final long MAX_IMAGE_BYTES = 1 * 1024 * 1024;
+                /** 最大总图片字节数：8MB */
+                private static final long MAX_TOTAL_IMAGE_BYTES = 8 * 1024 * 1024;
+
+                /** 从 ZIP 中读取所有所需图片的原始字节并填充到 result.images */
+                private static void extractAllImageBytes(ZipFile zipFile, EpubResult result) {
+                    if (result == null) return;
+                    if (result.chapters == null || result.chapters.isEmpty()) return;
+                    // 收集所有章节引用的图片路径
+                    java.util.Set<String> allPaths = new java.util.HashSet<String>();
+                    for (Chapter ch : result.chapters) {
+                        List<String> paths = ch.getImagePaths();
+                        if (paths != null) {
+                            allPaths.addAll(paths);
                         }
-                        result.images.put(normalized, bos.toByteArray());
-                    } catch (IOException e) {
-                        Log.w(TAG, "读取图片失败: " + normalized, e);
-                    } finally {
-                        if (is != null) try { is.close(); } catch (IOException e) { }
                     }
-                } else {
-                    Log.w(TAG, "ZIP 中找不到图片: " + normalized);
+                    if (allPaths.isEmpty()) {
+                        Log.d(TAG, "无图片需要提取");
+                        return;
+                    }
+                    Log.d(TAG, "提取图片字节: " + allPaths.size() + " 张");
+                    long totalBytes = 0;
+                    int skippedCount = 0;
+                    for (String path : allPaths) {
+                        String normalized = path.replace('\\', '/');
+                        ZipEntry entry = zipFile.getEntry(normalized);
+                        if (entry == null && normalized.startsWith("./")) {
+                            normalized = normalized.substring(2);
+                            entry = zipFile.getEntry(normalized);
+                        }
+                        if (entry != null) {
+                            // ★ 跳过超大单图（>1MB）
+                            long entrySize = entry.getSize();
+                            if (entrySize > MAX_IMAGE_BYTES) {
+                                Log.w(TAG, "跳过超大图片: " + normalized + " (" + entrySize + " bytes)");
+                                skippedCount++;
+                                continue;
+                            }
+                            // ★ 总图片字节已达上限，不再读取剩余图片
+                            if (totalBytes >= MAX_TOTAL_IMAGE_BYTES) {
+                                Log.w(TAG, "图片总字节已达 " + MAX_TOTAL_IMAGE_BYTES/1024/1024 + "MB 上限，跳过剩余 " + (allPaths.size() - skippedCount));
+                                break;
+                            }
+                            InputStream is = null;
+                            try {
+                                is = zipFile.getInputStream(entry);
+                                int bufSize = (int) Math.min(Math.max(entry.getSize(), 4096), MAX_IMAGE_BYTES);
+                                ByteArrayOutputStream bos = new ByteArrayOutputStream(bufSize);
+                                byte[] buf = new byte[8192];
+                                int len;
+                                long readBytes = 0;
+                                while ((len = is.read(buf)) != -1) {
+                                    readBytes += len;
+                                    // ★ 单图读取超限保护（防止 getSize() 不准确时内存溢出）
+                                    if (readBytes > MAX_IMAGE_BYTES) {
+                                        Log.w(TAG, "图片实际数据超限: " + normalized + " (" + readBytes + " bytes)，跳过");
+                                        bos = null;
+                                        skippedCount++;
+                                        break;
+                                    }
+                                    bos.write(buf, 0, len);
+                                }
+                                if (bos != null) {
+                                    byte[] imageData = bos.toByteArray();
+                                    result.images.put(normalized, imageData);
+                                    totalBytes += imageData.length;
+                                }
+                            } catch (IOException e) {
+                                Log.w(TAG, "读取图片失败: " + normalized, e);
+                            } finally {
+                                if (is != null) try { is.close(); } catch (IOException e) { }
+                            }
+                        } else {
+                            Log.w(TAG, "ZIP 中找不到图片: " + normalized);
+                        }
+                    }
+                    if (skippedCount > 0) {
+                        Log.w(TAG, "共跳过 " + skippedCount + " 张图片，当前图片总大小=" + (totalBytes/1024) + "KB");
+                    }
                 }
-            }
-        }
 
         /** 验证是否为有效的 EPUB 文件 */
     public static boolean isValidEpub(File file) {

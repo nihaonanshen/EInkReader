@@ -11,6 +11,12 @@ import java.util.List;
 
 import static com.google.common.truth.Truth.assertThat;
 
+/**
+ * DatabaseHelper 单元测试
+ * 
+ * ⚠️ 注意: 所有测试共享同一个 Robolectric Application，
+ * 因此每个测试完成后必须清理数据以避免污染后续测试
+ */
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 28)
 public class DatabaseHelperTest {
@@ -21,6 +27,22 @@ public class DatabaseHelperTest {
     public void setUp() {
         db = new DatabaseHelper(RuntimeEnvironment.getApplication());
         db.initialize();
+    }
+    
+    /** ✅ [Phase 2] 测试间数据隔离 - 清理可能污染的书籍和进度 */
+    @org.junit.After
+    public void tearDown() {
+        if (db == null) return;
+        try {
+            // 删除所有测试数据，避免跨测试污染
+            for (String key : new String[]{"test_key_1", "k1", "k2", "del_key", "prog_key", 
+                    "upd_key", "time_key", "rt_key", "z_key", "sum1", "sum2", "cascade_key", 
+                    "sample_book", "recent_test_book"}) {
+                db.deleteBook(key);
+            }
+        } catch (Exception e) {
+            // ignore cleanup errors
+        }
     }
 
     @Test

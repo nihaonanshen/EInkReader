@@ -8,8 +8,15 @@ local.properties
 .cxx/
 *.apk
 *.aab
+# Keystore files (security critical - never commit!)
 *.jks
 *.keystore
+
+# Backup and temporary files
+*.bak
+*.*.bak
+*_original.*
+*.pre-conversion.bak
 
 # Rust 编译产物
 rust/**/target/

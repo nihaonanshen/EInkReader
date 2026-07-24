@@ -45,6 +45,7 @@ class Chapter {
     fun getImagePaths(): List<String> = imagePaths
     fun getParagraphTypes(): List<Int> = paragraphTypes
 
+
     companion object {
         const val PARA_NORMAL = 0
         const val PARA_H1 = 1

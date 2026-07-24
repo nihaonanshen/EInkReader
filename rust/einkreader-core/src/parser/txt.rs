@@ -174,8 +174,22 @@ fn extract_title_from_filename(path: &str) -> String {
     name
 }
 
+/// 最大文件尺寸 (150MB) — 防止 OOM，支持大型学术/教材类 EPUB
+const MAX_FILE_SIZE: u64 = 150 * 1024 * 1024;
+
 /// 解析 TXT 文件
 pub fn parse_txt(file_path: &str, forced_encoding: Option<&str>) -> Result<TxtParseResult, String> {
+    // ✅ 安全检查：验证文件大小
+    let metadata = fs::metadata(file_path)
+        .map_err(|e| format!("读取文件元数据失败: {}", e))?;
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(format!(
+            "文件过大: {} bytes (最大允许 {} MB)",
+            metadata.len(),
+            MAX_FILE_SIZE / 1024 / 1024
+        ));
+    }
+    
     let bytes = fs::read(file_path).map_err(|e| format!("读取文件失败: {}", e))?;
     parse_txt_bytes(&bytes, file_path, forced_encoding)
 }

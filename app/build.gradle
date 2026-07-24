@@ -12,8 +12,11 @@ android {
         applicationId "com.einkreader"
         minSdk 19
         targetSdk 35
-        versionCode 6
-        versionName "0.0.5"
+        versionCode 7
+        versionName "0.0.6"
+        
+        // ✅ [Phase 6] Android 4.4 核心库反编译要求启用 Multidex
+        multiDexEnabled true
 
         def enableRust = project.hasProperty('enableRust') ? project.enableRust.toBoolean() : false
         buildConfigField "boolean", "ENABLE_RUST", enableRust ? "true" : "false"
@@ -21,10 +24,22 @@ android {
 
     signingConfigs {
         release {
-            storeFile file("einkreader.jks")
-            storePassword "einkreader123"
+            // ⚠️ SECURITY: 签名密码应从环境变量或 local.properties 读取
+            // 在生产环境中，请使用以下配置之一：
+            // 方式1: 环境变量 (推荐)
+            // storePassword providers.environmentVariable("SIGNING_STORE_PASSWORD").orElse("")
+            // keyPassword providers.environmentVariable("SIGNING_KEY_PASSWORD").orElse("")
+            // 方式2: local.properties (本地开发)
+            // def props = new Properties(); 
+            // props.load(new FileInputStream(rootProject.file("local.properties")))
+            // storePassword props['SIGNING_STORE_PASSWORD']
+            // keyPassword props['SIGNING_KEY_PASSWORD']
+            
+            // ⚠️ 当前为占位符值，实际构建前必须替换！
+            storeFile file(System.getenv("SIGNING_STORE_FILE") ?: "einkreader.jks")
+            storePassword System.getenv("SIGNING_STORE_PASSWORD") ?: ""
             keyAlias "einkreader"
-            keyPassword "einkreader123"
+            keyPassword System.getenv("SIGNING_KEY_PASSWORD") ?: ""
         }
     }
 
@@ -46,6 +61,7 @@ android {
     }
 
     compileOptions {
+        coreLibraryDesugaringEnabled true
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
@@ -79,6 +95,13 @@ jacoco {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.20"
+    // ✅ [Phase 6] Android 4.4 Java 8+ 核心库反编译支持（Lambda, Stream API等）
+    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.3"
+    
+    // Kotlin 协程
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3"
+    
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.mockito:mockito-core:5.11.0"
     testImplementation "org.robolectric:robolectric:4.11"

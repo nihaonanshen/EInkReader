@@ -48,15 +48,63 @@ static REGEX_H2: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<h2(?:[^>]*)?>(.*?
 static REGEX_H3: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<h3(?:[^>]*)?>(.*?)</h3\s*>").unwrap());
 static REGEX_STRIP_TAGS: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]*>").unwrap());
 
+/// 最大文件尺寸 (150MB) — 防止 OOM，支持大型学术/教材类 EPUB
+const MAX_FILE_SIZE: u64 = 150 * 1024 * 1024;
+
+/// 最大条目数量 — 防止 Zip Bomb
+const MAX_EPUB_ENTRIES: usize = 10_000;
+
+/// 最大章节内容大小 (500KB)
+const MAX_CHAPTER_CONTENT: usize = 500_000;
+
+/// 验证路径是否安全（不尝试逃离 ZIP 容器）
+fn sanitize_zip_path(path: &str) -> Option<String> {
+    // 阻止路径遍历攻击
+    if path.contains("..") {
+        return None;
+    }
+    // 只允许字母、数字、下划线、连字符、点、斜杠
+    if path.chars().any(|c| !c.is_ascii_alphanumeric() && c != '.' && c != '_' && c != '-' && c != '/') {
+        return None;
+    }
+    Some(path.to_string())
+}
+
 /// 解析 EPUB 文件，返回 EpubParseResult
 pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
     let file = fs::File::open(file_path)
         .map_err(|e| format!("打开 EPUB 文件失败: {}", e))?;
+    
+    // ✅ 安全检查：验证 EPUB 文件大小
+    let metadata = file.metadata()
+        .map_err(|e| format!("读取文件元数据失败: {}", e))?;
+    if metadata.len() > MAX_FILE_SIZE {
+        return Err(format!(
+            "EPUB 文件过大: {} bytes (最大允许 {} MB)",
+            metadata.len(),
+            MAX_FILE_SIZE / 1024 / 1024
+        ));
+    }
+    
     let mut archive = ZipArchive::new(file)
         .map_err(|e| format!("读取 ZIP 失败: {}", e))?;
+    
+    // ✅ 安全检查：限制 ZIP 条目数量
+    if archive.len() > MAX_EPUB_ENTRIES {
+        return Err(format!(
+            "EPUB 包含过多条目: {} (最大允许 {})",
+            archive.len(), MAX_EPUB_ENTRIES
+        ));
+    }
 
     // 1. container.xml → OPF 路径
     let opf_path = parse_container(&mut archive)?;
+    
+    // ✅ ZIP Slip 防护
+    if sanitize_zip_path(&opf_path).is_none() {
+        return Err("无效的 OPF 路径: 包含路径遍历序列".to_string());
+    }
+    
     let opf_dir = opf_path
         .rsplit_once('/')
         .map(|(d, _)| format!("{}/", d))
@@ -70,7 +118,7 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
 
     // 4. 提取图片（从 manifest 中的 image/* 类型）
         let mut images: HashMap<String, String> = HashMap::new();
-        for (id, href) in &manifest {
+        for (_id, href) in &manifest {
             // 需要从 manifest 获取 media-type，但我们当前没有存储 media-type
             // 这里简单通过文件扩展名判断
             if href.ends_with(".jpg")
@@ -99,6 +147,12 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
     let mut chapters: Vec<EpubChapter> = Vec::new();
 
     for (i, href) in spine_hrefs.iter().enumerate() {
+        // ✅ ZIP Slip 防护
+        if sanitize_zip_path(href).is_none() {
+            eprintln!("跳过不安全的路径: {}", href);
+            continue;
+        }
+        
         let entry_path = format!("{}{}", opf_dir, href);
 
         let raw_html = get_raw_html(&mut archive, &entry_path, href);
@@ -108,9 +162,9 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
             clean_html(&raw_html)
         };
 
-        // 限制每章最大 500KB
-        let content = if content.len() > 500_000 {
-            format!("{}\n\n……(篇幅受限)……", &content[..500_000])
+        // 限制每章最大内容大小 (MAX_CHAPTER_CONTENT)
+        let content = if content.len() > MAX_CHAPTER_CONTENT {
+            format!("{}\n\n……(篇幅受限)……", &content[..MAX_CHAPTER_CONTENT])
         } else {
             content
         };

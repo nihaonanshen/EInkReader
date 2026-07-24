@@ -5,7 +5,6 @@ import android.util.Log
 import com.einkreader.core.model.Chapter
 import com.einkreader.core.parser.EpubParser
 import com.einkreader.core.parser.TxtParser
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.nio.ByteBuffer
@@ -23,6 +22,9 @@ class NativeBridge {
         private const val TAG = "NativeBridge"
         @Volatile var sLibraryLoaded = false
             private set
+        
+        // ✅ [Phase 6] Singleton instance for static access
+        val bridgeInstance: NativeBridge by lazy { NativeBridge() }
 
         init {
             try {
@@ -63,12 +65,12 @@ class NativeBridge {
     class PageData {
         var content: String? = null
         var lineCount: Int = 0
-        val lines: MutableList<LineMetric> = ArrayList()
+        var lines: MutableList<LineMetric> = ArrayList()
     }
 
     /** 布局结果 */
     class LayoutResult {
-        val pages: MutableList<PageData> = ArrayList()
+        var pages: MutableList<PageData> = ArrayList()
         var totalLines: Int = 0
         var totalPages: Int = 0
         var elapsedNs: Long = 0L
@@ -89,14 +91,14 @@ class NativeBridge {
     ) {
         override fun hashCode(): Int {
             var hc = text?.hashCode() ?: 0
-            hc = 31 * hc + Float.Float.floatToIntBits(maxWidthPx)
-            hc = 31 * hc + Float.Float.floatToIntBits(maxHeightPx)
-            hc = 31 * hc + Float.Float.floatToIntBits(fontSizePx)
-            hc = 31 * hc + Float.Float.floatToIntBits(lineSpacing)
-            hc = 31 * hc + Float.Float.floatToIntBits(paragraphSpacing)
+            hc = 31 * hc + maxWidthPx.toInt()
+            hc = 31 * hc + maxHeightPx.toInt()
+            hc = 31 * hc + fontSizePx.toInt()
+            hc = 31 * hc + lineSpacing.toInt()
+            hc = 31 * hc + paragraphSpacing.toInt()
             hc = 31 * hc + if (firstLineIndent) 1 else 0
-            hc = 31 * hc + Float.Float.floatToIntBits(paddingLeft)
-            hc = 31 * hc + Float.Float.floatToIntBits(paddingTop)
+            hc = 31 * hc + paddingLeft.toInt()
+            hc = 31 * hc + paddingTop.toInt()
             return hc
         }
     }
@@ -106,33 +108,44 @@ class NativeBridge {
     private val lruCache: MutableMap<LayoutKey, LayoutResult> =
         object : LinkedHashMap<LayoutKey, LayoutResult>(4, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<LayoutKey, LayoutResult>?): Boolean {
-                return size() > 3
+                // ✅ [Phase 3] 从 3 增大到 20，减少翻页 cache miss
+                return size > 20
             }
         }
 
     // ========== JNI 原生方法声明 ==========
 
-    @JvmStatic external fun nativeDetectEncoding(data: ByteArray, len: Int): String
-    @JvmStatic external fun nativeParseTxt(filePath: String, forcedEncoding: String): String
-    @JvmStatic external fun nativeParseEpub(filePath: String): String
+    external fun nativeDetectEncoding(data: ByteArray, len: Int): String
+    external fun nativeParseTxt(filePath: String, forcedEncoding: String): String
+    external fun nativeParseEpub(filePath: String): String
 
     /** JSON 版（兼容） */
-    @JvmStatic external fun nativeLayoutText(
+    external fun nativeLayoutText(
         text: String, maxWidthPx: Float, maxHeightPx: Float,
         fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
         firstLineIndent: Boolean
     ): String
 
-    /** 二进制版（主要入口） */
-    @JvmStatic external fun nativeLayoutTextBinary(
+    /** 二进制版 JNI 原生方法 */
+    external fun nativeLayoutTextBinary(
         text: String, maxWidthPx: Float, maxHeightPx: Float,
         fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
         firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float
     ): ByteArray
 
+    /** 检查布局结果是否在 LRU 缓存中 (内部调用) */
+    fun isLayoutCachedInternal(
+        text: String?, maxWidthPx: Float, maxHeightPx: Float,
+        fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
+        firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float
+    ): Boolean {
+        val key = LayoutKey(text, maxWidthPx, maxHeightPx, fontSizePx,
+                lineSpacing, paragraphSpacing, firstLineIndent, paddingLeft, paddingTop)
+        return lruCache.containsKey(key)
+    }
+
     // ========== 编码检测（带 fallback） ==========
 
-    @JvmStatic
     fun detectEncoding(file: File): String {
         if (sLibraryLoaded) {
             try {
@@ -151,12 +164,10 @@ class NativeBridge {
 
     // ========== TXT/EPUB 解析（带 fallback，不变） ==========
 
-    @JvmStatic
     fun parseTxt(file: File): TxtParser.ParseResult {
         return parseTxt(file, null)
     }
 
-    @JvmStatic
     fun parseTxt(file: File, forcedEncoding: String?): TxtParser.ParseResult {
         if (sLibraryLoaded) {
             try {
@@ -176,20 +187,19 @@ class NativeBridge {
         val result = TxtParser.ParseResult()
         result.bookTitle = root.optString("book_title", "")
         result.encoding = root.optString("encoding", "UTF-8")
-        result.chapters = ArrayList()
+        result.chapters = java.util.ArrayList()
         val chapters = root.getJSONArray("chapters")
         for (i in 0 until chapters.length()) {
             val ch = chapters.getJSONObject(i)
             val title = ch.optString("title", "第" + (i + 1) + "章")
             val content = ch.optString("content", "")
             val chapter = Chapter(title, content)
-            chapter.setIndex(i)
+            chapter.index = i
             result.chapters.add(chapter)
         }
         return result
     }
 
-    @JvmStatic
     @Throws(Exception::class)
     fun parseEpub(file: File): EpubParser.EpubResult {
         if (sLibraryLoaded) {
@@ -210,17 +220,17 @@ class NativeBridge {
         val result = EpubParser.EpubResult()
         result.title = root.optString("title", "")
         result.author = root.optString("author", "")
-        result.chapters = ArrayList()
+        result.chapters.clear()
         val chapters = root.getJSONArray("chapters")
         for (i in 0 until chapters.length()) {
             val ch = chapters.getJSONObject(i)
             val title = ch.optString("title", "第" + (i + 1) + "章")
             val content = ch.optString("content", "")
             val chapter = Chapter(title, content)
-            chapter.setIndex(i)
+            chapter.index = i
             result.chapters.add(chapter)
         }
-        result.images = HashMap()
+        result.images.clear(); result.images.putAll(HashMap<String, ByteArray>())
         if (root.has("images")) {
             val imgs = root.getJSONObject("images")
             val keys = imgs.keys()
@@ -239,10 +249,9 @@ class NativeBridge {
 
     // ========== bincode 二进制解析（精确匹配 Rust bincode v1 格式） ==========
 
-    @JvmStatic
     fun parseLayoutBinary(data: ByteArray?): LayoutResult {
         val result = LayoutResult()
-        if (data.isNullOrEmpty()) return result
+        if (data == null || data.isEmpty()) return result
         try {
             val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
             val pageCount = bb.long.toInt()
@@ -286,7 +295,6 @@ class NativeBridge {
     // ========== Rust 文本布局（双路径 + LRU 缓存） ==========
 
     /** JSON 版布局（兼容旧调用） */
-    @JvmStatic
     fun layoutText(
         text: String, maxWidthPx: Int, maxHeightPx: Int,
         fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
@@ -309,7 +317,6 @@ class NativeBridge {
     }
 
     /** 二进制版布局（主要入口，含 LRU 缓存） */
-    @JvmStatic
     fun layoutTextBinary(
         text: String, maxWidthPx: Float, maxHeightPx: Float,
         fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
@@ -333,7 +340,6 @@ class NativeBridge {
     }
 
     /** JSON 解析（保留兼容） */
-    @JvmStatic
     fun parseLayoutJson(json: String): LayoutResult {
         val result = LayoutResult()
         try {
@@ -366,33 +372,22 @@ class NativeBridge {
             }
             result.totalLines = root.optInt("total_lines", 0)
             result.totalPages = root.optInt("total_pages", 0)
-            result.elapsedNs = root.optLong("elapsed_ns", 0L)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse layout JSON", e)
+            Log.w(TAG, "JSON layout parse failed", e)
         }
         return result
     }
 
-    // ========== 缓存状态查询 ==========
+    // ========== Benchmark 工具类 ==========
 
-    @JvmStatic
-    fun isLayoutCached(text: String, maxWidthPx: Float, maxHeightPx: Float,
-                      fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
-                      firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float): Boolean {
-        val key = LayoutKey(text, maxWidthPx, maxHeightPx, fontSizePx,
-                lineSpacing, paragraphSpacing, firstLineIndent, paddingLeft, paddingTop)
-        return cacheGet(key) != null
-    }
-
-    // ========== Benchmarks ==========
-
-    class BenchmarkResult {
-        var javaNs: Long = 0
-        var jsonNs: Long = 0
-        var binaryNs: Long = 0
-        var pages: Int = 0
+    /** 性能对比结果 */
+    data class BenchmarkResult(
+        var javaNs: Long = 0,
+        var jsonNs: Long = 0,
+        var binaryNs: Long = 0,
+        var pages: Int = 0,
         var tag: String? = null
-
+    ) {
         fun summary(): String {
             return String.format("[%s] pages=%d  Java=%.2fms  JSON=%.2fms  Binary=%.2fms  speedup=%.1fx",
                     tag, pages, javaNs / 1e6, jsonNs / 1e6, binaryNs / 1e6,
@@ -400,7 +395,6 @@ class NativeBridge {
         }
     }
 
-    @JvmStatic
     fun benchmarkLayout(text: String, width: Int, height: Int,
            fontSize: Float, lineSpacing: Float, paragraphSpacing: Float,
            indent: Boolean, paddingLeft: Float, paddingTop: Float): BenchmarkResult {
@@ -413,7 +407,7 @@ class NativeBridge {
         br.jsonNs = System.nanoTime() - start
         br.pages = r1.totalPages
 
-        synchronized(this) { lruCache.clear() }
+        synchronized(this@NativeBridge) { lruCache.clear() }
         val start2 = System.nanoTime()
         val r2 = layoutTextBinary(text, width.toFloat(), height.toFloat(),
                 fontSize, lineSpacing, paragraphSpacing, indent, paddingLeft, paddingTop)

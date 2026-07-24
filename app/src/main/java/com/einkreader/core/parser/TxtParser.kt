@@ -34,7 +34,7 @@ class TxtParser {
 
         // ===== 章节标题正则（综合版，覆盖主流中文小说格式）=====
         @JvmField
-        val CHAPTER_PATTERN = Pattern.compile(
+        val CHAPTER_PATTERN: Pattern = Pattern.compile(
             "^[\\s\\u3000]*[【\\-―※（(\\[{]*" +
             "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]" +
             "[）)〕\\]}]?[\\s\\u3000]*" +
@@ -43,13 +43,13 @@ class TxtParser {
         )
 
         @JvmField
-        val LOOSE_CHAPTER_PATTERN = Pattern.compile(
+        val LOOSE_CHAPTER_PATTERN: Pattern = Pattern.compile(
             "^\\s*第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]"
         )
 
         // 新增：匹配英文 Chapter 1 / Chapter One / Ch.1 格式
         @JvmField
-        val ENG_CHAPTER_PATTERN = Pattern.compile(
+        val ENG_CHAPTER_PATTERN: Pattern = Pattern.compile(
             "^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module|lecture)" +
             "[.\\-:\\s]+(\\d+|[a-z]+(?:\\s[a-z]+){0,3})" +
             "(?:[.\\-:\\s]+[A-Za-z].*)?[\\s\\u3000]*$"
@@ -57,13 +57,13 @@ class TxtParser {
 
         // 新增：匹配 "VOL.1" "Volume 1" 格式
         @JvmField
-        val VOLUME_PATTERN = Pattern.compile(
+        val VOLUME_PATTERN: Pattern = Pattern.compile(
             "^(?i)(volume|vol)\\s*\\.?\\s*[\\d]+(?:[.:\\s]+.*)?$"
         )
 
         // 新增：匹配 "楔子" "序章" "引子" "后记" "尾声" "番外" 等
         @JvmField
-        val SPECIAL_CHAPTER_PATTERN = Pattern.compile(
+        val SPECIAL_CHAPTER_PATTERN: Pattern = Pattern.compile(
             "^[\\s\\u3000]*(?:楔子|序章|序言|引子|前言|前奏|序幕|开篇|开场|写在前面|题记)" +
             "[\\s\\u3000]*(?:[\\S\\uff20].*)?[\\s\\u3000]*$|" +
             "^[\\s\\u3000]*(?:后记|尾声|终章|结局|结语|番外|外传|特别篇|附录|附注|致谢|序章)" +
@@ -75,7 +75,7 @@ class TxtParser {
 
         // 收紧：匹配纯数字章节
         @JvmField
-        val NUM_CHAPTER_PATTERN = Pattern.compile(
+        val NUM_CHAPTER_PATTERN: Pattern = Pattern.compile(
             "^[\\s\\u3000]*" +
             "(?:[零一二三四五六七八九十百千万亿]{1,3}|[\\d]{1,3})" +
             "[、．.\\s\\uff20]" +
@@ -85,7 +85,7 @@ class TxtParser {
 
         // 装饰性标题
         @JvmField
-        val DECORATED_CHAPTER_PATTERN = Pattern.compile(
+        val DECORATED_CHAPTER_PATTERN: Pattern = Pattern.compile(
             "^[\\s\\u3000]*" +
             "[\\u2500-\\u257F\\u25c6\\u25c7\\u25ce\\u25b2\\u25b3\\u25bd\\u25bc\\u25cb\\u25cf\\u25a1\\u25a4\\u2606\\u2605\\u203c\\u2049\\u2a2f\\u2217\\u2261\\u005f\\-\\s\\uff20]{0,15}" +
             "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]" +
@@ -94,14 +94,14 @@ class TxtParser {
 
         // 第X章必须在行首附近
         @JvmField
-        val ANYWHERE_CHAPTER_PATTERN = Pattern.compile(
+        val ANYWHERE_CHAPTER_PATTERN: Pattern = Pattern.compile(
             "^[\\s\\u3000\\u2500-\\u257F\\u25c6\\u25c7\\u25ce\\u25b2\\u25b3\\u25bd\\u25bc\\u25cb\\u25cf\\u25a1\\u25a4\\u2606\\u2605\\u203c\\u2049\\u2a2f\\u2217\\u2261\\u005f\\-]{0,10}" +
             "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]"
         )
 
         // 严格版模式
         @JvmField
-        val STRICT_CN_PATTERN = Pattern.compile(
+        val STRICT_CN_PATTERN: Pattern = Pattern.compile(
             "^[\\s\\u3000]*[【\\-―※（(\\[{]*" +
             "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]" +
             "[）)〕\\]}]?[\\s\\u3000]*" +
@@ -110,7 +110,7 @@ class TxtParser {
         )
 
         @JvmField
-        val STRICT_EN_PATTERN = Pattern.compile(
+        val STRICT_EN_PATTERN: Pattern = Pattern.compile(
             "^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module|lecture)" +
             "[.\\-:\\s]*[\\d零一二三四五六七八九十百千]+" +
             "(?:[.\\-:\\s]+[A-Za-z].*)?[\\s\\u3000]*$"
@@ -176,7 +176,7 @@ class TxtParser {
             // 一次读取全文件到 byte[]
             val fileBytes: ByteArray
             FileInputStream(file).use { fis ->
-                val baos = ByteArrayOutputStream(Math.max(8192, Math.min(file.length(), Int.MAX_VALUE).toInt()))
+                val baos = ByteArrayOutputStream(Math.max(8192, Math.min(file.length(), Int.MAX_VALUE.toLong()).toInt()))
                 val buf = ByteArray(8192)
                 var n: Int
                 while (fis.read(buf).also { n = it } != -1) {
@@ -194,7 +194,7 @@ class TxtParser {
             result.encoding = encoding
 
             // 尝试解码 + 章节检测，编码不对时自动回退
-            val fullText = tryDecodeAndDetect(fileBytes, fileBytes.size, encoding, result)
+            var fullText = tryDecodeAndDetect(fileBytes, fileBytes.size, encoding, result)
             if (fullText == null) {
                 for (fallback in FALLBACK_ENCODINGS) {
                     if (fallback.equals(encoding, ignoreCase = true)) continue
@@ -207,13 +207,13 @@ class TxtParser {
             }
             if (fullText == null) {
                 // 所有编码都失败，用 UTF-8 兜底
-                return try {
+                try {
                     fullText = String(fileBytes, Charset.forName("UTF-8"))
                     result.encoding = "UTF-8"
-                    fullText
                 } catch (e: Exception) {
-                    ""
+                    fullText = ""
                 }
+                return result
             }
 
             // 构建行偏移数组
@@ -279,7 +279,7 @@ class TxtParser {
                 for (li in 0 until lineCount) {
                     allLines.add(extractLine(fullText, lineOffsets, li))
                 }
-                result.chapters = splitBySize(allLines, DEFAULT_CHAPTER_SIZE)
+                result.chapters = splitBySize(allLines, DEFAULT_CHAPTER_SIZE) as MutableList<Chapter>
             } else {
                 com.einkreader.ui.reader.DebugLog.log("Txt", "检测到章节: " + result.chapters.size + "个")
             }
@@ -310,7 +310,7 @@ class TxtParser {
                 if (totalChars > 200 && chineseCount == 0) {
                     var asciiCount = 0
                     for (i in 0 until totalChars) {
-                        if (text[i] <= 0x7F) asciiCount++
+                        if (text[i].code <= 0x7F) asciiCount++
                     }
                     val asciiRatio = asciiCount * 100 / totalChars
                     if (asciiRatio < 90) {
@@ -368,13 +368,13 @@ class TxtParser {
                     count++
                     if (chapterBreaks.isEmpty() && li > 0) {
                         chapterBreaks.add(intArrayOf(0, li))
-                        chapterTitles.add(null)
+                        chapterTitles.add("")
                     } else if (chapterBreaks.isNotEmpty()) {
                         val prev = chapterBreaks[chapterBreaks.size - 1]
                         prev[1] = li
                     }
                     chapterBreaks.add(intArrayOf(li + 1, -1))
-                    chapterTitles.add(cleanTitle(extractChapterTitle(lineText)))
+                    chapterTitles.add(cleanTitle(extractChapterTitle(lineText)) ?: "")
                 }
             }
             return count
@@ -452,14 +452,14 @@ class TxtParser {
             for (i in lines.indices) {
                 current.append(lines[i]).append("\n")
                 if (current.length >= charsPerChapter) {
-                    chapters.add(Chapter("第$chapterNum段", current.toString(), lineStart, i + 1))
+                    chapters.add(Chapter("第${chapterNum}段", current.toString(), lineStart, i + 1))
                     current.setLength(0)
                     lineStart = i + 1
                     chapterNum++
                 }
             }
             if (current.length > 0) {
-                chapters.add(Chapter("第$chapterNum段", current.toString(), lineStart, lines.size))
+                chapters.add(Chapter("第${chapterNum}段", current.toString(), lineStart, lines.size))
             }
             return chapters
         }
@@ -483,8 +483,8 @@ class TxtParser {
             return try {
                 val md = MessageDigest.getInstance("MD5")
                 val digest = md.digest(path.toByteArray(Charset.forName("UTF-8")))
-                val hash = digest.joinToString("") { "%02x".format(it and 0xFF) }
-                File(getCacheDir(txtFile), "$hash_${txtFile.length()}_${txtFile.lastModified()}.cache")
+                val hash = digest.joinToString("") { "%02x".format((it.toInt() and 0xFF)) }
+                File(getCacheDir(txtFile), "$hash${txtFile.length()}_${txtFile.lastModified()}.cache")
             } catch (e: Exception) {
                 val fallback = "${Math.abs(path.hashCode())}_${txtFile.length()}_${txtFile.lastModified()}.cache"
                 File(getCacheDir(txtFile), fallback)
@@ -569,7 +569,7 @@ class TxtParser {
         /** 全文内容（懒加载：仅在需要时构建，节省内存和 CPU） */
         @JvmField var fullContent: String? = null
         private var fullContentBuilt = false
-        @JvmField val chapters: MutableList<Chapter> = ArrayList()
+        @JvmField var chapters: MutableList<Chapter> = ArrayList()
 
         /** 获取全文，仅在首次构建 */
         fun getFullContent(): String? {
