@@ -21,7 +21,7 @@ fi
 
 # 确保 Android 目标已安装
 echo "=== Checking Rust Android targets ==="
-for target in aarch64-linux-android armv7-linux-androideabi x86_64-linux-android i686-linux-android; do
+for target in aarch64-linux-android armv7-linux-androideabi; do
     if ! rustup target list --installed | grep -q "$target"; then
         echo "Installing target: $target"
         rustup target add "$target"
@@ -59,31 +59,24 @@ if [ -n "$ANDROID_NDK_HOME" ]; then
     # 配置链接器
     export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLCHAIN_DIR/bin/aarch64-linux-android21-clang"
     export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$TOOLCHAIN_DIR/bin/armv7a-linux-androideabi21-clang"
-    export CARGO_TARGET_X86_64_LINUX_ANDROID_LINKER="$TOOLCHAIN_DIR/bin/x86_64-linux-android21-clang"
-    export CARGO_TARGET_I686_LINUX_ANDROID_LINKER="$TOOLCHAIN_DIR/bin/i686-linux-android21-clang"
 fi
 
 cd "$CRATE_DIR"
 
-# 构建（仅 arm64 + armv7，x86 仅用于模拟器）
+# 构建（仅 arm64 + armv7，与 gradle abiFilters 一致）
 echo "=== Building for arm64-v8a ==="
 cargo build --target aarch64-linux-android --release
 
 echo "=== Building for armeabi-v7a ==="
 cargo build --target armv7-linux-androideabi --release
 
-echo "=== Building for x86_64 (emulator) ==="
-cargo build --target x86_64-linux-android --release
-
 # 复制 .so 到 jniLibs
 echo "=== Copying .so files ==="
 mkdir -p "$JNILIB_DIR/arm64-v8a"
 mkdir -p "$JNILIB_DIR/armeabi-v7a"
-mkdir -p "$JNILIB_DIR/x86_64"
 
 cp "$CRATE_DIR/target/aarch64-linux-android/release/libeinkreader_core.so" "$JNILIB_DIR/arm64-v8a/"
 cp "$CRATE_DIR/target/armv7-linux-androideabi/release/libeinkreader_core.so" "$JNILIB_DIR/armeabi-v7a/"
-cp "$CRATE_DIR/target/x86_64-linux-android/release/libeinkreader_core.so" "$JNILIB_DIR/x86_64/"
 
 echo "=== Done! .so files copied to $JNILIB_DIR ==="
 ls -la "$JNILIB_DIR"/*/libeinkreader_core.so

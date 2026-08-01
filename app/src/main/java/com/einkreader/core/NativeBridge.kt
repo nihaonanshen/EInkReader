@@ -3,9 +3,9 @@ package com.einkreader.core
 import android.util.Base64
 import android.util.Log
 import com.einkreader.core.model.Chapter
-import com.einkreader.core.parser.EpubParser
+import com.einkreader.core.model.EpubResult
+import com.einkreader.core.parser.EpubParserFallback
 import com.einkreader.core.parser.TxtParser
-import org.json.JSONObject
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -116,22 +116,19 @@ class NativeBridge {
     // ========== JNI 原生方法声明 ==========
 
     external fun nativeDetectEncoding(data: ByteArray, len: Int): String
-    external fun nativeParseTxt(filePath: String, forcedEncoding: String): String
-    external fun nativeParseEpub(filePath: String): String
-
-    /** JSON 版（兼容） */
-    external fun nativeLayoutText(
-        text: String, maxWidthPx: Float, maxHeightPx: Float,
-        fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
-        firstLineIndent: Boolean
-    ): String
-
-    /** 二进制版 JNI 原生方法 */
+    external fun nativeParseTxtBinary(filePath: String, forcedEncoding: String): ByteArray
+    external fun nativeParseEpubBinary(filePath: String): ByteArray
     external fun nativeLayoutTextBinary(
         text: String, maxWidthPx: Float, maxHeightPx: Float,
         fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
         firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float
     ): ByteArray
+
+    // 🔥 按需加载 EPUB 章节内容
+    external fun nativeLoadEpubChapterContent(filePath: String, chapterXhtmlPath: String): String
+
+    // 🔥 批量布局（bincode 版）- 输入输出均为 bincode 二进制
+    external fun nativeLayoutTextsBatchBinary(texts: ByteArray, params: ByteArray): ByteArray
 
     /** 检查布局结果是否在 LRU 缓存中 (内部调用) */
     fun isLayoutCachedInternal(
@@ -162,7 +159,20 @@ class NativeBridge {
         return com.einkreader.utils.EncodingDetector.detect(file)
     }
 
-    // ========== TXT/EPUB 解析（带 fallback，不变） ==========
+        /** 检测 ByteArray 的编码，优先使用 Rust JNI，失败后回退到 Java 实现 */
+    fun detectEncoding(data: ByteArray, len: Int): String {
+        if (sLibraryLoaded) {
+            try {
+                return nativeDetectEncoding(data, len)
+            } catch (e: Exception) {
+                Log.w(TAG, "Rust encoding detection failed for ByteArray", e)
+            }
+        }
+        // 回退到 Java 实现，已有 EncodingDetector.detect(data, len)
+        return com.einkreader.utils.EncodingDetector.detect(data, len)
+    }
+
+
 
     fun parseTxt(file: File): TxtParser.ParseResult {
         return parseTxt(file, null)
@@ -171,79 +181,143 @@ class NativeBridge {
     fun parseTxt(file: File, forcedEncoding: String?): TxtParser.ParseResult {
         if (sLibraryLoaded) {
             try {
-                val json = nativeParseTxt(file.absolutePath, forcedEncoding ?: "")
-                return parseTxtJson(json, file)
+                // 使用二进制路径（bincode 序列化）
+                val binary = nativeParseTxtBinary(file.absolutePath, forcedEncoding ?: "")
+                val result = parseTxtBinary(binary, file)
+                if (result.chapters.isNotEmpty()) return result
             } catch (e: Exception) {
-                Log.w(TAG, "Rust TXT parser failed, falling back", e)
+                Log.w(TAG, "Rust TXT binary parse failed, falling back to Java", e)
             }
         }
+        // 回退到 Java 实现
         return TxtParser.parse(file, forcedEncoding)
     }
 
     @Throws(Exception::class)
-    private fun parseTxtJson(json: String, file: File): TxtParser.ParseResult {
-        val root = JSONObject(json)
-        if (root.has("error")) throw Exception("Rust parser error: " + root.getString("error"))
-        val result = TxtParser.ParseResult()
-        result.bookTitle = root.optString("book_title", "")
-        result.encoding = root.optString("encoding", "UTF-8")
-        result.chapters = java.util.ArrayList()
-        val chapters = root.getJSONArray("chapters")
-        for (i in 0 until chapters.length()) {
-            val ch = chapters.getJSONObject(i)
-            val title = ch.optString("title", "第" + (i + 1) + "章")
-            val content = ch.optString("content", "")
-            val chapter = Chapter(title, content)
-            chapter.index = i
-            result.chapters.add(chapter)
-        }
-        return result
-    }
-
-    @Throws(Exception::class)
-    fun parseEpub(file: File): EpubParser.EpubResult {
+    fun parseEpub(file: File): EpubResult {
         if (sLibraryLoaded) {
             try {
-                val json = nativeParseEpub(file.absolutePath)
-                return parseEpubJson(json, file)
+                // 使用二进制路径（bincode 序列化）
+                val binary = nativeParseEpubBinary(file.absolutePath)
+                val result = parseEpubBinary(binary, file)
+                if (result.chapters.isNotEmpty()) return result
             } catch (e: Exception) {
-                Log.w(TAG, "Rust EPUB parser failed", e)
+                Log.w(TAG, "Rust EPUB binary parse failed, falling back to Java", e)
             }
         }
-        return EpubParser.parse(file)
+        // 回退到 Java 实现
+        return EpubParserFallback.parse(file)
     }
 
-    @Throws(Exception::class)
-    private fun parseEpubJson(json: String, file: File): EpubParser.EpubResult {
-        val root = JSONObject(json)
-        if (root.has("error")) throw Exception("Rust EPUB error: " + root.getString("error"))
-        val result = EpubParser.EpubResult()
-        result.title = root.optString("title", "")
-        result.author = root.optString("author", "")
-        result.chapters.clear()
-        val chapters = root.getJSONArray("chapters")
-        for (i in 0 until chapters.length()) {
-            val ch = chapters.getJSONObject(i)
-            val title = ch.optString("title", "第" + (i + 1) + "章")
-            val content = ch.optString("content", "")
-            val chapter = Chapter(title, content)
-            chapter.index = i
-            result.chapters.add(chapter)
+    // 🔥 按需加载 EPUB 章节内容
+    fun loadEpubChapterContent(filePath: String, chapterXhtmlPath: String): String {
+        if (!sLibraryLoaded) {
+            throw IllegalStateException("Rust core library not available")
         }
-        result.images.clear(); result.images.putAll(HashMap<String, ByteArray>())
-        if (root.has("images")) {
-            val imgs = root.getJSONObject("images")
-            val keys = imgs.keys()
-            while (keys.hasNext()) {
-                val k = keys.next()
-                result.images!![k] = Base64.decode(imgs.getString(k), Base64.DEFAULT)
+        return nativeLoadEpubChapterContent(filePath, chapterXhtmlPath)
+    }
+
+    // 🔥 批量布局（JSON版）— texts: JSON array of strings, params: JSON object
+    /**
+     * 批量布局（bincode 版）：对多个文本段应用相同参数，返回解析后的 List<LayoutResult>
+     */
+    fun batchLayoutTextsParsed(
+        texts: List<String>, maxWidthPx: Float, maxHeightPx: Float,
+        fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
+        firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float
+    ): List<LayoutResult> {
+        if (!sLibraryLoaded) return emptyList()
+        return try {
+            val textsBin = encodeBincodeStringList(texts)
+            val paramsBin = encodeLayoutParamsBinary(
+                maxWidthPx, maxHeightPx, fontSizePx, lineSpacing, paragraphSpacing,
+                firstLineIndent, paddingLeft, paddingTop
+            )
+            val binary = nativeLayoutTextsBatchBinary(textsBin, paramsBin)
+            parseBatchLayoutBinary(binary)
+        } catch (e: Exception) {
+            Log.w(TAG, "batchLayoutTextsParsed failed", e)
+            emptyList()
+        }
+    }
+
+    /** 将 List<String> 编码为 bincode Vec<String>（u64 长度 + 每项 u64 字节长度 + UTF-8 字节） */
+    private fun encodeBincodeStringList(texts: List<String>): ByteArray {
+        val sizes = texts.sumOf { 8 + it.toByteArray(StandardCharsets.UTF_8).size }
+        val bb = ByteBuffer.allocate(8 + sizes).order(ByteOrder.LITTLE_ENDIAN)
+        bb.putLong(texts.size.toLong())
+        for (t in texts) {
+            val bytes = t.toByteArray(StandardCharsets.UTF_8)
+            bb.putLong(bytes.size.toLong())
+            bb.put(bytes)
+        }
+        return bb.array()
+    }
+
+    /** 将布局参数编码为 bincode 序列化的 LayoutParams */
+    private fun encodeLayoutParamsBinary(
+        maxWidthPx: Float, maxHeightPx: Float, fontSizePx: Float,
+        lineSpacing: Float, paragraphSpacing: Float, firstLineIndent: Boolean,
+        paddingLeft: Float, paddingTop: Float
+    ): ByteArray {
+        val bb = ByteBuffer.allocate(4 * 6 + 1 + 4 * 2).order(ByteOrder.LITTLE_ENDIAN)
+        bb.putFloat(maxWidthPx)
+        bb.putFloat(maxHeightPx)
+        bb.putFloat(fontSizePx)
+        bb.putFloat(lineSpacing)
+        bb.putFloat(paragraphSpacing)
+        bb.put(if (firstLineIndent) 1 else 0)
+        bb.putFloat(paddingLeft)
+        bb.putFloat(paddingTop)
+        return bb.array()
+    }
+
+    /**
+     * 解析批量布局 bincode 结果：bincode Vec<LayoutResult>
+     * 格式：u64 数量 + 每个 LayoutResult（与 parseLayoutBinary 相同的单元素布局）
+     */
+    fun parseBatchLayoutBinary(data: ByteArray?): List<LayoutResult> {
+        val results = ArrayList<LayoutResult>()
+        if (data == null || data.isEmpty()) return results
+        try {
+            val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+            val count = bb.long.toInt()
+            for (i in 0 until count) {
+                results.add(parseSingleLayoutBinary(bb))
             }
+        } catch (e: Exception) {
+            Log.w(TAG, "parseBatchLayoutBinary failed", e)
         }
-        if ((result.title == null || result.title!!.isEmpty()) && file != null) {
-            val name = file.name
-            val dot = name.lastIndexOf('.')
-            result.title = if (dot > 0) name.substring(0, dot) else name
+        return results
+    }
+
+    /** 从 ByteBuffer 当前位置解析单个 LayoutResult（bincode 单元素格式） */
+    private fun parseSingleLayoutBinary(bb: ByteBuffer): LayoutResult {
+        val result = LayoutResult()
+        val pageCount = bb.long.toInt()
+        result.pages = ArrayList(pageCount)
+        for (pi in 0 until pageCount) {
+            val pd = PageData()
+            pd.content = readBincodeString(bb)
+            pd.lineCount = bb.long.toInt()   // line_count 字段
+            val lineCount = bb.long.toInt()  // Vec<LineMetric> 长度（必须消费，否则指针错位）
+            pd.lines = ArrayList(lineCount)
+            for (li in 0 until lineCount) {
+                val lm = LineMetric()
+                lm.text = readBincodeString(bb)
+                lm.x = bb.float
+                lm.y = bb.float
+                lm.width = bb.float
+                lm.height = bb.float
+                lm.isParagraphEnd = bb.get() != 0.toByte()
+                lm.isFirstInParagraph = bb.get() != 0.toByte()
+                pd.lines.add(lm)
+            }
+            result.pages.add(pd)
         }
+        result.totalLines = bb.long.toInt()
+        result.totalPages = bb.long.toInt()
+        result.elapsedNs = bb.long
         return result
     }
 
@@ -254,30 +328,7 @@ class NativeBridge {
         if (data == null || data.isEmpty()) return result
         try {
             val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-            val pageCount = bb.long.toInt()
-            result.pages = ArrayList(pageCount)
-            for (pi in 0 until pageCount) {
-                val pd = PageData()
-                pd.content = readBincodeString(bb)
-                pd.lineCount = bb.long.toInt()
-                val lineCount = bb.long.toInt()
-                pd.lines = ArrayList(lineCount)
-                for (li in 0 until lineCount) {
-                    val lm = LineMetric()
-                    lm.text = readBincodeString(bb)
-                    lm.x = bb.float
-                    lm.y = bb.float
-                    lm.width = bb.float
-                    lm.height = bb.float
-                    lm.isParagraphEnd = bb.get() != 0.toByte()
-                    lm.isFirstInParagraph = bb.get() != 0.toByte()
-                    pd.lines.add(lm)
-                }
-                result.pages.add(pd)
-            }
-            result.totalLines = bb.long.toInt()
-            result.totalPages = bb.long.toInt()
-            result.elapsedNs = bb.long
+            return parseSingleLayoutBinary(bb)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse bincode layout", e)
         }
@@ -292,29 +343,128 @@ class NativeBridge {
         return String(strBytes, StandardCharsets.UTF_8)
     }
 
-    // ========== Rust 文本布局（双路径 + LRU 缓存） ==========
+    /** 读取 bincode 中的 Option<String> (tag: 0=None, 1=Some) */
+    private fun readOptionalBincodeString(bb: ByteBuffer): String? {
+        val tag = bb.get().toInt()
+        if (tag == 0) return null
+        return readBincodeString(bb)
+    }
 
-    /** JSON 版布局（兼容旧调用） */
-    fun layoutText(
-        text: String, maxWidthPx: Int, maxHeightPx: Int,
-        fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
-        firstLineIndent: Boolean
-    ): LayoutResult {
-        val key = LayoutKey(text, maxWidthPx.toFloat(), maxHeightPx.toFloat(), fontSizePx,
-                lineSpacing, paragraphSpacing, firstLineIndent, 0f, 0f)
-        cacheGet(key)?.let { return it }
-        if (!sLibraryLoaded) return LayoutResult()
-        return try {
-            val json = nativeLayoutText(text, maxWidthPx.toFloat(), maxHeightPx.toFloat(),
-                    fontSizePx, lineSpacing, paragraphSpacing, firstLineIndent)
-            val r = parseLayoutJson(json)
-            if (r.totalPages > 0) cachePut(key, r)
-            r
+    /** 读取 bincode 中的 boolean (u8: 0=false, else=true) */
+    private fun readBincodeBoolean(bb: ByteBuffer): Boolean {
+        return bb.get().toInt() != 0
+    }
+
+        // ========== bincode 二进制 TXT/EPUB 解析（替代 JSON 路径） ==========
+
+    /** 从 bincode 二进制解析 TxtParser.ParseResult */
+    fun parseTxtBinary(data: ByteArray?, file: File): TxtParser.ParseResult {
+        val result = TxtParser.ParseResult()
+        if (data == null || data.isEmpty()) return result
+        if (data[0].toInt() == 1) {
+            val errMsg = try { String(data.copyOfRange(1, data.size), StandardCharsets.UTF_8) } catch (e: Exception) { "Unknown error" }
+            Log.w(TAG, "Rust TXT binary parser error: $errMsg")
+            return result
+        }
+        try {
+            val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+            result.bookTitle = readBincodeString(bb)
+            result.encoding = readBincodeString(bb)
+            val chapterCount = bb.long.toInt()
+            result.chapters = ArrayList(chapterCount)
+            for (i in 0 until chapterCount) {
+                val title = readBincodeString(bb)
+                val content = readBincodeString(bb)
+                val lineStart = if (readBincodeBoolean(bb)) bb.long.toInt() else 0
+                val lineEnd = if (readBincodeBoolean(bb)) bb.long.toInt() else 0
+                val index = if (readBincodeBoolean(bb)) bb.long.toInt() else 0
+                val chapter = Chapter(title, content, lineStart, lineEnd)
+                chapter.index = index
+                result.chapters.add(chapter)
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "Rust layout(JSON) failed", e)
-            LayoutResult()
+            Log.e(TAG, "Failed to parse bincode TXT result", e)
+        }
+        return result
+    }
+
+    /** 从 bincode 二进制解析 EpubResult */
+    fun parseEpubBinary(data: ByteArray?, file: File): EpubResult {
+        val result = EpubResult()
+        if (data == null || data.isEmpty()) return result
+        if (data[0].toInt() == 1) {
+            val errMsg = try { String(data.copyOfRange(1, data.size), StandardCharsets.UTF_8) } catch (e: Exception) { "Unknown error" }
+            Log.w(TAG, "Rust EPUB binary parser error: $errMsg")
+            return result
+        }
+        try {
+            val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+            result.title = readBincodeString(bb)
+            result.author = readBincodeString(bb)
+            result.encoding = readBincodeString(bb)
+            val chapterCount = bb.long.toInt()
+            result.chapters = ArrayList(chapterCount)
+            for (i in 0 until chapterCount) {
+                val title = readBincodeString(bb)
+                val content = readOptionalBincodeString(bb) ?: ""
+                val imageCount = bb.long.toInt()
+                val imagePaths = ArrayList<String>(imageCount)
+                for (j in 0 until imageCount) { imagePaths.add(readBincodeString(bb)) }
+                val paraTypeCount = bb.long.toInt()
+                val paragraphTypes = ArrayList<Int>(paraTypeCount)
+                // Rust 侧为 Vec<i32>：每元素 4 字节，必须用 bb.int 读取（原 bb.long 8 字节导致后续章节全部错位）
+                for (j in 0 until paraTypeCount) { paragraphTypes.add(bb.int) }
+                val xhtmlPath = readOptionalBincodeString(bb)
+                val chapter = Chapter(title, content)
+                chapter.index = i
+                chapter.xhtmlPath = xhtmlPath
+                chapter.setImagePaths(imagePaths)
+                chapter.setParagraphTypes(paragraphTypes)
+                result.chapters.add(chapter)
+            }
+            val imageMapCount = bb.long.toInt()
+            result.images.clear()
+            for (i in 0 until imageMapCount) {
+                val key = readBincodeString(bb)
+                val value = readBincodeString(bb)
+                result.images[key] = Base64.decode(value, Base64.DEFAULT)
+            }
+            if (result.title.isEmpty() && file != null) {
+                val name = file.name
+                val dot = name.lastIndexOf('.')
+                result.title = if (dot > 0) name.substring(0, dot) else name
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse bincode EPUB result", e)
+        }
+        return result
+    }
+
+    /** 使用二进制路径解析 TXT（纯 bincode 路径，无 JSON fallback） */
+    fun parseTxtWithBinary(file: File, forcedEncoding: String?): TxtParser.ParseResult {
+        if (!sLibraryLoaded) throw IllegalStateException("Rust core library not loaded")
+        try {
+            val binary = nativeParseTxtBinary(file.absolutePath, forcedEncoding ?: "")
+            return parseTxtBinary(binary, file)
+        } catch (e: Exception) {
+            Log.e(TAG, "Rust TXT binary parse failed", e)
+            throw RuntimeException("TXT binary parse failed", e)
         }
     }
+
+    /** 使用二进制路径解析 EPUB（纯 bincode 路径，无 JSON fallback） */
+    fun parseEpubWithBinary(file: File): EpubResult {
+        if (!sLibraryLoaded) throw IllegalStateException("Rust core library not loaded")
+        try {
+            val binary = nativeParseEpubBinary(file.absolutePath)
+            return parseEpubBinary(binary, file)
+        } catch (e: Exception) {
+            Log.e(TAG, "Rust EPUB binary parse failed", e)
+            throw RuntimeException("EPUB binary parse failed", e)
+        }
+    }
+
+    // ========== Rust 文本布局（双路径 + LRU 缓存） ==========
 
     /** 二进制版布局（主要入口，含 LRU 缓存） */
     fun layoutTextBinary(
@@ -339,58 +489,18 @@ class NativeBridge {
         }
     }
 
-    /** JSON 解析（保留兼容） */
-    fun parseLayoutJson(json: String): LayoutResult {
-        val result = LayoutResult()
-        try {
-            val root = JSONObject(json)
-            if (root.has("error")) return result
-            val pagesArr = root.getJSONArray("pages")
-            result.pages = ArrayList(pagesArr.length())
-            for (i in 0 until pagesArr.length()) {
-                val p = pagesArr.getJSONObject(i)
-                val pd = PageData()
-                pd.content = p.optString("content", "")
-                pd.lineCount = p.optInt("line_count", 0)
-                if (p.has("lines")) {
-                    val linesArr = p.getJSONArray("lines")
-                    pd.lines = ArrayList(linesArr.length())
-                    for (j in 0 until linesArr.length()) {
-                        val l = linesArr.getJSONObject(j)
-                        val lm = LineMetric()
-                        lm.text = l.optString("text", "")
-                        lm.x = l.optDouble("x", 0.0).toFloat()
-                        lm.y = l.optDouble("y", 0.0).toFloat()
-                        lm.width = l.optDouble("width", 0.0).toFloat()
-                        lm.height = l.optDouble("height", 0.0).toFloat()
-                        lm.isParagraphEnd = l.optBoolean("is_paragraph_end", false)
-                        lm.isFirstInParagraph = l.optBoolean("is_first_in_paragraph", false)
-                        pd.lines.add(lm)
-                    }
-                }
-                result.pages.add(pd)
-            }
-            result.totalLines = root.optInt("total_lines", 0)
-            result.totalPages = root.optInt("total_pages", 0)
-        } catch (e: Exception) {
-            Log.w(TAG, "JSON layout parse failed", e)
-        }
-        return result
-    }
-
     // ========== Benchmark 工具类 ==========
 
     /** 性能对比结果 */
     data class BenchmarkResult(
         var javaNs: Long = 0,
-        var jsonNs: Long = 0,
         var binaryNs: Long = 0,
         var pages: Int = 0,
         var tag: String? = null
     ) {
         fun summary(): String {
-            return String.format("[%s] pages=%d  Java=%.2fms  JSON=%.2fms  Binary=%.2fms  speedup=%.1fx",
-                    tag, pages, javaNs / 1e6, jsonNs / 1e6, binaryNs / 1e6,
+            return String.format("[%s] pages=%d  Java=%.2fms  Binary=%.2fms  speedup=%.1fx",
+                    tag, pages, javaNs / 1e6, binaryNs / 1e6,
                     if (javaNs > 0 && binaryNs > 0) javaNs.toDouble() / binaryNs else 0.0)
         }
     }
@@ -402,17 +512,12 @@ class NativeBridge {
         br.tag = "LayoutBench"
         br.javaNs = 0
 
-        val start = System.nanoTime()
-        val r1 = layoutText(text, width, height, fontSize, lineSpacing, paragraphSpacing, indent)
-        br.jsonNs = System.nanoTime() - start
-        br.pages = r1.totalPages
-
         synchronized(this@NativeBridge) { lruCache.clear() }
         val start2 = System.nanoTime()
         val r2 = layoutTextBinary(text, width.toFloat(), height.toFloat(),
                 fontSize, lineSpacing, paragraphSpacing, indent, paddingLeft, paddingTop)
         br.binaryNs = System.nanoTime() - start2
-        if (br.pages == 0) br.pages = r2.totalPages
+        br.pages = r2.totalPages
 
         Log.i(TAG, br.summary())
         return br
@@ -423,3 +528,4 @@ class NativeBridge {
     private fun cacheGet(key: LayoutKey): LayoutResult? = lruCache[key]
     private fun cachePut(key: LayoutKey, result: LayoutResult) { lruCache[key] = result }
 }
+

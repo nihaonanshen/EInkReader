@@ -19,55 +19,65 @@ const DEFAULT_CHAPTER_SIZE: usize = 3000;
 
 /// 懒编译的正则表达式
 struct ChapterPatterns {
-    /// 完整版：第X章/回/节 + 可选标题
-    full: Regex,
-    /// 宽松匹配：只要开头是"第X章"就算
-    loose: Regex,
-    /// 英文 Chapter 1 / Chapter One 格式
-    english: Regex,
-    /// Volume 格式
-    volume: Regex,
-    /// 特殊章节：楔子、序章、后记等
-    special: Regex,
-    /// 纯数字章节（要求有明确分隔符）
-    numeric: Regex,
-    /// 装饰性标题
-    decorated: Regex,
-    /// 任何位置的第X章（行首10字符内）
-    anywhere: Regex,
+    /// 组合正则（含全部 8 种模式），消除 O(n×m) 多次匹配
+    combined: Regex,
+    /// 严格模式组合正则（full + loose + english + special）
+    combined_strict: Regex,
 }
 
 impl ChapterPatterns {
     fn new() -> Self {
+        // 全部 8 种模式已合并为单一组合正则，消除 O(n×m) 多次匹配。
+        // 分支不带锚点，构造时统一外包 \A(?:...)\z 实现全串匹配，
+        // 与 Kotlin 版 Matcher.matches() 语义一致（原实现用 is_match 只做子串匹配，会误判 "Chapter 12 是一个..." 这类正文行）。
+        let all_patterns: [&str; 8] = [
+            r"[\s\u{3000}]*[【\-―※（(\[]*第[零一二三四五六七八九十百千万亿0-9]{1,8}[章节回卷集篇部折][）)〕\]}]?[\s\u{3000}]*(?:[】\-―※]*[\s\u{3000}]*(\S.*))?[\s\u{3000}]*",
+            r"\s*第[零一二三四五六七八九十百千万亿0-9]{1,8}[章节回卷集篇部折]",
+            r"(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module|lecture)[.\-:\s]+([0-9]+|[a-z]+(?:\s[a-z]+){0,3})(?:[.\-:\s]+[A-Za-z].*)?[\s\u{3000}]*",
+            r"[\s\u{3000}]*(?:楔子|序章|序言|引子|前言|前奏|序幕|开篇|开场|写在前面|题记)[\s\u{3000}]*(?:[\S\u{3000}].*)?[\s\u{3000}]*|[\s\u{3000}]*(?:后记|尾声|终章|结局|结语|番外|外传|特别篇|附录|附注|致谢)[\s\u{3000}]*(?:[\S\u{3000}].*)?[\s\u{3000}]*",
+            r"(?i)(volume|vol)\s*\.?\s*[0-9]+(?:[.:\s]+.*)?",
+            r"[\s\u{3000}]*(?:[零一二三四五六七八九十百千万亿]{1,8}[、．.\s\u{3000}][\u{4e00}-\u{9fff}]{2,30}|[0-9]{1,3}[、．.][\u{4e00}-\u{9fff}]{8,30})[\s\u{3000}]*",
+            r"[\s\u{3000}]*[\u{2500}-\u{257F}\u{25c6}\u{25c7}\u{25ce}\u{25b2}\u{25b3}\u{25bd}\u{25bc}\u{25cb}\u{25cf}\u{25a1}\u{25a4}\u{2606}\u{2605}\u{203b}\u{203c}\u{2049}\u{2a2f}\u{2217}\u{2261}\u{005f}\u{002a}\u{0023}\-\s\u{3000}]{0,15}第[零一二三四五六七八九十百千万亿0-9]{1,8}[章节回卷集篇部折].*",
+            r"[\s\u{3000}\u{2500}-\u{257F}\u{25c6}\u{25c7}\u{25ce}\u{25b2}\u{25b3}\u{25bd}\u{25bc}\u{25cb}\u{25cf}\u{25a1}\u{25a4}\u{2606}\u{2605}\u{203b}\u{203c}\u{2049}\u{2a2f}\u{2217}\u{2261}\u{005f}\u{002a}\u{0023}\-]{0,10}第[零一二三四五六七八九十百千万亿0-9]{1,8}[章节回卷集篇部折].*",
+        ];
+
+        let strict_patterns = [
+            all_patterns[0],
+            all_patterns[1],
+            r"(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module|lecture)[.\-:\s]*[0-9零一二三四五六七八九十百千]+(?:[.\-:\s]+[A-Za-z].*)?[\s\u{3000}]*",
+            all_patterns[4],
+        ];
+
         Self {
-            full: Regex::new(
-                r"^[\s\u{3000}]*[【\-―※（(\[{]*第[零一二三四五六七八九十百千万亿\d]{1,8}[章节回卷集篇部折][）)〕\]}]?[\s\u{3000}]*(?:[】\-―※]*[\s\u{3000}]*(\S.*))?[\s\u{3000}]*$"
-            ).unwrap(),
-            loose: Regex::new(
-                r"^\s*第[零一二三四五六七八九十百千万亿\d]{1,8}[章节回卷集篇部折]"
-            ).unwrap(),
-            english: Regex::new(
-                // 允许阿拉伯数字或英文单词数字（One/Two/One Hundred 等）
-                r"^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module|lecture)[.\-:\s]+(\d+|[a-z]+(?:\s[a-z]+){0,3})[.\-:\s]*(?:[A-Za-z].*)?[\s\u{3000}]*$"
-            ).unwrap(),
-            volume: Regex::new(
-                r"^(?i)(volume|vol)\s*\.?\s*[\d]+(?:[.:\s]+.*)?$"
-            ).unwrap(),
-            special: Regex::new(
-                // 允许副标题，如 "楔子 暗夜降临"、"番外 午夜"
-                r"^[\s\u{3000}]*(?:楔子|序章|序言|引子|前言|前奏|序幕|开篇|开场|写在前面|题记)[\s\u{3000}]*(?:[\S　].*)?[\s\u{3000}]*$|^[\s\u{3000}]*(?:后记|尾声|终章|结局|结语|番外|外传|特别篇|附录|附注|致谢)[\s\u{3000}]*(?:[\S　].*)?[\s\u{3000}]*$"
-            ).unwrap(),
-            // 收紧：编号最多 3 位，且必须跟着中文字，避免把列表序号当章节
-            numeric: Regex::new(
-                r"^[\s\u{3000}]*(?:[零一二三四五六七八九十百千万亿]{1,3}|\d{1,3})[、．.\s　][\u{4e00}-\u{9fff}]{1,30}[\s\u{3000}]*$"
-            ).unwrap(),
-            decorated: Regex::new(
-                r"^[\s\u{3000}]*[\u{2500}-\u{257F}◆◇◎▲△▽▼○●□■☆★※＊*#_\-　]{0,15}第[零一二三四五六七八九十百千万亿\d]{1,8}[章节回卷集篇部折].*$"
-            ).unwrap(),
-            anywhere: Regex::new(
-                r"^[\s\u{3000}\u{2500}-\u{257F}◆◇◎▲△▽▼○●□■☆★※＊*#_\-]{0,10}第[零一二三四五六七八九十百千万亿\d]{1,8}[章节回卷集篇部折]"
-            ).unwrap(),
+            combined: Regex::new(&format!(r"\A(?:{})\z", all_patterns.join("|"))).unwrap(),
+            combined_strict: Regex::new(&format!(r"\A(?:{})\z", strict_patterns.join("|"))).unwrap(),
         }
+    }
+
+    /// 快速预过滤：行首/行内可能构成章节标题的线索才进入正则匹配。
+    /// 必须覆盖全部 8 种模式的起点形态（含 "第"、英文前缀、卷、数字/中文数字编号、特殊关键词），
+    /// 否则 "VOL.1"、"一、初入江湖" 这类标题会被提前挡掉（与 Kotlin 版无预过滤的行为一致）。
+    fn likely_chapter_line(trimmed: &str) -> bool {
+        let lower = trimmed.to_lowercase();
+        let first = trimmed.chars().next();
+        let has_chinese_prefix = trimmed.contains('第');
+        let has_english_prefix = lower.contains("chapter")
+            || lower.contains("chap")
+            || lower.contains("ch");
+        let has_volume_prefix = lower.starts_with("vol");
+        let has_cn_num_prefix = first.map_or(false, |c| "零一二三四五六七八九十百千万亿".contains(c));
+        let has_digit_prefix = first.map_or(false, |c| c.is_ascii_digit());
+        let has_special_keyword = ["楔子", "序章", "序言", "引子", "前言", "前奏", "序幕",
+                                   "开篇", "开场", "写在前面", "题记", "后记", "尾声", "终章",
+                                   "结局", "结语", "番外", "外传", "特别篇", "附录", "附注", "致谢"]
+            .iter()
+            .any(|&s| trimmed.contains(s));
+        has_chinese_prefix
+            || has_english_prefix
+            || has_volume_prefix
+            || has_cn_num_prefix
+            || has_digit_prefix
+            || has_special_keyword
     }
 
     fn is_chapter_title(&self, line: &str) -> bool {
@@ -75,18 +85,15 @@ impl ChapterPatterns {
             return false;
         }
         let trimmed = line.trim();
-        // 太长的行不可能是标题
-        if trimmed.len() > 80 {
+        // 太长的行不可能是标题（按字符数而非字节数，与 Kotlin 的 length 语义一致）
+        if trimmed.chars().count() > 80 {
             return false;
         }
-        self.full.is_match(trimmed)
-            || self.loose.is_match(trimmed)
-            || self.english.is_match(trimmed)
-            || self.special.is_match(trimmed)
-            || self.volume.is_match(trimmed)
-            || self.numeric.is_match(trimmed)
-            || self.decorated.is_match(trimmed)
-            || self.anywhere.is_match(trimmed)
+        if !Self::likely_chapter_line(trimmed) {
+            return false;
+        }
+        // 使用单一组合正则，消除 O(n×m) 多次匹配
+        self.combined.is_match(trimmed)
     }
 
     /// 严格模式：只匹配"第X章"完整/宽松版、英文 Chapter 版、特殊关键词类标题。
@@ -96,13 +103,14 @@ impl ChapterPatterns {
             return false;
         }
         let trimmed = line.trim();
-        if trimmed.len() > 80 {
+        if trimmed.chars().count() > 80 {
             return false;
         }
-        self.full.is_match(trimmed)
-            || self.loose.is_match(trimmed)
-            || self.english.is_match(trimmed)
-            || self.special.is_match(trimmed)
+        if !Self::likely_chapter_line(trimmed) {
+            return false;
+        }
+        // 使用单一组合正则
+        self.combined_strict.is_match(trimmed)
     }
 
     fn extract_title(&self, line: &str) -> String {
@@ -110,21 +118,18 @@ impl ChapterPatterns {
         if trimmed.is_empty() {
             return trimmed.to_string();
         }
-        if trimmed.len() > 80 {
+        if trimmed.chars().count() > 80 { return String::new(); }
+        if !Self::likely_chapter_line(trimmed) {
             return String::new();
         }
-        if self.full.is_match(trimmed)
-            || self.loose.is_match(trimmed)
-            || self.english.is_match(trimmed)
-            || self.special.is_match(trimmed)
-            || self.volume.is_match(trimmed)
-            || self.numeric.is_match(trimmed)
-            || self.decorated.is_match(trimmed)
-            || (trimmed.len() < 50 && self.anywhere.is_match(trimmed))
-        {
-            return trimmed.to_string();
+        if self.combined.is_match(trimmed) {
+            trimmed.to_string()
+        } else if self.combined_strict.is_match(trimmed) {
+            // 宽松模式未命中时回退严格模式（覆盖 "Chapter 三" 等严格支持、宽松不支持的格式）
+            trimmed.to_string()
+        } else {
+            String::new()
         }
-        String::new()
     }
 }
 
@@ -244,8 +249,12 @@ pub fn parse_txt_bytes(
     }
 
     // ★ 后处理：如果检测到的章节数量异常多，或相邻章节间隔过少，
-    // 切换到严格模式重新识别（防止正文里 "第一章" 字样造成大量误判）
+    // 疑似正文里 "第一章" 字样造成大量误判。保留宽松结果，用严格模式重扫；
+    // 仅当严格模式标题数显著减少（确认误判）时才采用严格结果，
+    // 避免 200+ 章的长篇小说（网文常见）被误切后丢失 "VOL.1" 等宽松格式标题。
     if detected_count > 200 || has_suspicious_density(&chapter_breaks) {
+        let loose_breaks = chapter_breaks.clone();
+        let loose_titles = chapter_titles.clone();
         chapter_breaks.clear();
         chapter_titles.clear();
         for li in 0..line_count {
@@ -262,6 +271,14 @@ pub fn parse_txt_bytes(
                 chapter_titles.push(Some(clean_title(&patterns.extract_title(&line_text))));
             }
         }
+        let strict_count = chapter_breaks.len();
+        if strict_count * 10 > loose_breaks.len() * 9 {
+            // 严格模式没有显著减少 → 大概率是真实长书，保留宽松结果
+            chapter_breaks.clear();
+            chapter_titles.clear();
+            chapter_breaks.extend(loose_breaks);
+            chapter_titles.extend(loose_titles);
+        }
     }
 
     if !chapter_breaks.is_empty() {
@@ -270,20 +287,27 @@ pub fn parse_txt_bytes(
         }
     }
 
-    // 后处理：合并多行标题
-    let loose_pattern = ChapterPatterns::new().loose;
+    // 后处理：合并多行标题。仅当下一行是"短副标题"形态才合并（不含句读/引号/括号标点、
+    // 不以句末标点结尾、长度 <= 12），防止 "第X章" 独占行 + 正文紧跟时把正文第一行吞进标题。
+    // 注意：带 $ 锚点实现全串匹配，与 Kotlin 的 LOOSE_CHAPTER_PATTERN.matches() 语义一致，
+    // 否则 "第二章 初入江湖" 这类已带副标题的标题也会进入合并分支。
+    let loose_regex = regex::Regex::new(r"^\s*第[零一二三四五六七八九十百千万亿0-9]{1,8}[章节回卷集篇部折]$").unwrap();
     for i in 0..chapter_titles.len() {
         if let Some(ref title) = chapter_titles[i] {
-            if title.len() < 12 && loose_pattern.is_match(title) {
+            if title.chars().count() < 12 && loose_regex.is_match(title) {
                 let brk = chapter_breaks[i];
                 let first_content_line = brk.0;
                 if first_content_line < line_count {
                     let next_line = extract_line(&full_text, &line_offsets, first_content_line);
                     let trimmed_next = next_line.trim();
+                    let has_punct = trimmed_next
+                        .chars()
+                        .any(|c| "。，！？；、：…“”‘’\"'「」『』()（）".contains(c));
                     if !trimmed_next.is_empty()
-                        && trimmed_next.len() < 80
+                        && trimmed_next.chars().count() <= 12
                         && !patterns.is_chapter_title(&trimmed_next)
                         && !trimmed_next.starts_with("[[IMAGE:")
+                        && !has_punct
                     {
                         chapter_titles[i] = Some(format!("{} {}", title, trimmed_next));
                         chapter_breaks[i].0 = first_content_line + 1;
@@ -340,7 +364,7 @@ pub fn parse_txt_bytes(
 }
 
 /// 尝试用指定编码解码，失败时尝试回退编码
-fn try_decode(bytes: &[u8], encoding: &str, file_path: &str) -> Result<String, String> {
+fn try_decode(bytes: &[u8], encoding: &str, _file_path: &str) -> Result<String, String> {
     // 先用检测到的编码尝试
     let enc = encoding_rs::Encoding::for_label(encoding.as_bytes()).unwrap_or(encoding_rs::UTF_8);
     let (text, _, had_errors) = enc.decode(bytes);
@@ -544,5 +568,108 @@ mod tests {
         // 间隔较大（100 行）的，不应被识别为可疑
         let breaks2: Vec<(usize, usize)> = (0..20).map(|i| (i * 100, i * 100 + 1)).collect();
         assert!(!has_suspicious_density(&breaks2));
+    }
+
+    #[test]
+    fn test_fullmatch_semantics() {
+        // is_match 必须等价于 Kotlin 的 matches()（全串匹配），不能只匹配前缀
+        let patterns = ChapterPatterns::new();
+        // 中文后缀不满足 ENG 模式的 [A-Za-z] 后缀要求，应拒绝
+        assert!(!patterns.is_chapter_title("Chapter 12 是一个很好的章节，让人回味"));
+        // 正文行（"第X章"仅出现在句中）不得误判
+        assert!(!patterns.is_chapter_title("他说到了第三章的内容"));
+        assert!(!patterns.is_chapter_title("这一章讲的是第一章内容"));
+        // 真实标题仍应匹配
+        assert!(patterns.is_chapter_title("Chapter 12: The Beginning"));
+        assert!(patterns.is_chapter_title("第一章 初入江湖"));
+        // 英文长句后缀与 Kotlin 的 matches() 语义一致：整行都是英文后缀时 ENG 模式整行匹配
+        assert!(patterns.is_chapter_title("Chapter 12: The Beginning is a long sentence here"));
+    }
+
+    #[test]
+    fn test_num_pattern_no_false_positive() {
+        // 正文数字列表不应被误判为章节
+        let patterns = ChapterPatterns::new();
+        assert!(!patterns.is_chapter_title("1.他们来了"));
+        assert!(!patterns.is_chapter_title("12 他们是英雄"));
+        assert!(!patterns.is_chapter_title("3.然后搅拌均匀"));
+        // 真正的数字编号标题仍应匹配
+        assert!(patterns.is_chapter_title("一、初入江湖"));
+        assert!(patterns.is_chapter_title("12、刀光剑影生死一线之间"));
+        assert!(patterns.is_chapter_title("一百零八、群雄逐鹿"));
+        // VOLUME 标题不应被预过滤挡掉
+        assert!(patterns.is_chapter_title("VOL.1"));
+        assert!(patterns.is_chapter_title("Vol.1 天玄大陆"));
+    }
+
+    #[test]
+    fn test_strict_extract_title() {
+        // 严格模式支持、宽松模式不支持的格式，提取标题时应回退严格模式
+        let patterns = ChapterPatterns::new();
+        assert_eq!(patterns.extract_title("Chapter 三"), "Chapter 三");
+        assert_eq!(patterns.extract_title("Chapter 十二"), "Chapter 十二");
+        assert!(patterns.is_strict_chapter_title("Chapter 三"));
+    }
+
+    #[test]
+    fn test_long_title_chars_not_bytes() {
+        // 长度上限按字符数而非字节数（30 个汉字 = 90 字节，应仍可识别）
+        let patterns = ChapterPatterns::new();
+        let long = format!("第{}章{}", "一", "初".repeat(30));
+        assert!(patterns.is_chapter_title(&long));
+    }
+
+    #[test]
+    fn test_end_to_end_merge_behavior() {
+        // 端到端：验证多行标题合并不吞正文、副标题正常合并
+        let text = "\
+第一章
+他推开门走了进去。
+
+第二章 初入江湖
+江湖传言，风云再起。
+
+第三章
+暗夜降临
+";
+        let result = parse_txt_bytes(text.as_bytes(), "test.txt", None).unwrap();
+        let chapters = &result.chapters;
+        assert_eq!(chapters.len(), 3);
+        // 第一章：独占一行 + 正文紧跟，正文首行不得被吞进标题
+        assert_eq!(chapters[0].title, "第一章");
+        assert!(chapters[0].content.contains("他推开门走了进去。"));
+        // 第二章：标题行内联副标题
+        assert_eq!(chapters[1].title, "第二章 初入江湖");
+        // 第三章：下一行是短无标点副标题 → 合并
+        assert_eq!(chapters[2].title, "第三章 暗夜降临");
+    }
+
+    #[test]
+    fn test_merge_not_applied_to_title_with_subtitle() {
+        // 已带副标题的标题（"第二章 初入江湖"）不得再进入合并分支，
+        // 否则下一行短正文会被误拼进标题（回归：loose_regex 曾缺 $ 锚点）
+        let text = "\
+第二章 初入江湖
+暗夜
+正文开始。
+";
+        let result = parse_txt_bytes(text.as_bytes(), "test.txt", None).unwrap();
+        assert_eq!(result.chapters.len(), 1);
+        assert_eq!(result.chapters[0].title, "第二章 初入江湖");
+        assert!(result.chapters[0].content.contains("正文开始。"));
+    }
+
+    #[test]
+    fn test_end_to_end_strict_keep_loose() {
+        // 端到端：200+ 章的长书（含 VOLUME 卷标题）不应被误切到严格模式丢标题
+        let mut text = String::new();
+        for i in 1..=220 {
+            text.push_str(&format!("第{}章 标题{}\n内容若干行\n\n", i, i));
+        }
+        text.push_str("VOL.2 新的征程\n这里是第二卷的正文内容\n");
+        let result = parse_txt_bytes(text.as_bytes(), "long.txt", None).unwrap();
+        // 宽松模式结果被保留：221 个标题（220 章 + 1 卷）
+        assert_eq!(result.chapters.len(), 221);
+        assert!(result.chapters.iter().any(|c| c.title == "VOL.2 新的征程"));
     }
 }

@@ -3,7 +3,7 @@
 //! 模拟 Android Paint.measureText() 的宽度估算，无需实际字体度量。
 //! 按 CJK / ASCII / 全角标点分类赋予不同 em 宽度，返回分页结果。
 //!
-//! 输出：JSON（兼容）或 bincode 二进制（高性能），均包含精确坐标。
+//! 输出：bincode 二进制（高性能），包含精确坐标。
 
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -60,6 +60,7 @@ fn char_width_em(c: char) -> f32 {
 }
 
 /// 执行文本布局（完整分页 + 精确坐标 + 基准计时）
+#[inline(always)]
 pub fn layout_text(
     text: &str,
     max_width_px: f32,
@@ -114,7 +115,7 @@ pub fn layout_text(
             continue;
         }
 
-        let mut line_builder = String::with_capacity(para.len() / 2);
+        let mut line_builder = String::with_capacity(para.len());
         let mut line_width = 0.0_f32;
         let mut is_first_char = true;
         let mut is_first_line_in_para = true;
@@ -128,16 +129,17 @@ pub fn layout_text(
             };
 
             if line_width + cw > content_width - current_indent && !line_builder.is_empty() {
-                // 刷出当前行
+                // Save current line and reset builder using mem::replace (avoids clone)
+                let line_text = std::mem::replace(&mut line_builder, String::with_capacity(para.len()));
                 flat_lines.push(FlattenedLine {
-                    text: line_builder.clone(),
+                    text: line_text,
                     x: padding_left + current_indent,
                     width: line_width,
                     is_paragraph_end: false,
                     is_first_in_paragraph: is_first_line_in_para,
                 });
                 line_height_count += 1;
-                line_builder.clear();
+                // line_builder is already empty after replace, no need to clear
                 line_width = 0.0;
                 is_first_char = true;
                 is_first_line_in_para = false;
@@ -241,6 +243,7 @@ pub fn layout_text(
 }
 
 /// 将布局结果序列化为 bincode 二进制
+#[inline(always)]
 pub fn layout_text_binary(
     text: &str,
     max_width_px: f32,
@@ -258,6 +261,66 @@ pub fn layout_text_binary(
         first_line_indent, padding_left, padding_top,
     );
     bincode::serialize(&result).unwrap_or_default()
+}
+
+/// 批量文本布局：对多个文本段应用相同参数，一次性返回所有布局结果
+/// texts: 要排版的文本切片（按顺序）
+/// params: 布局参数结构体
+/// Result: Vec<LayoutResult>, 每个文本对应一个结果
+#[allow(dead_code)] // 将通过 JNI 调用
+pub fn batch_layout_texts(
+    texts: &[&str],
+    params: LayoutParams,
+) -> Vec<LayoutResult> {
+    texts.iter().map(|&text| {
+        layout_text(
+            text, params.max_width_px, params.max_height_px,
+            params.font_size_px, params.line_spacing, params.paragraph_spacing,
+            params.first_line_indent, params.padding_left, params.padding_top,
+        )
+    }).collect()
+}
+
+/// 批量文本布局（bincode 序列化版）：
+/// 输入 texts 与 params 均为 bincode 序列化，输出 bincode 序列化的 Vec<LayoutResult>
+#[allow(dead_code)] // 将通过 JNI 调用
+pub fn batch_layout_texts_binary(texts_bin: &[u8], params_bin: &[u8]) -> Vec<u8> {
+    let texts: Vec<String> = match bincode::deserialize(texts_bin) {
+        Ok(v) => v,
+        Err(_) => vec![],
+    };
+    if texts.is_empty() {
+        return bincode::serialize(&Vec::<LayoutResult>::new()).unwrap_or_default();
+    }
+    let params: LayoutParams = match bincode::deserialize(params_bin) {
+        Ok(v) => v,
+        Err(_) => LayoutParams {
+            max_width_px: 300.0,
+            max_height_px: 400.0,
+            font_size_px: 16.0,
+            line_spacing: 1.5,
+            paragraph_spacing: 1.8,
+            first_line_indent: false,
+            padding_left: 10.0,
+            padding_top: 10.0,
+        },
+    };
+    let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+    let results = batch_layout_texts(&text_refs, params);
+    bincode::serialize(&results).unwrap_or_default()
+}
+
+/// 布局参数容器
+#[derive(Clone, Copy, Serialize, Deserialize)]
+pub struct LayoutParams {
+    pub max_width_px: f32,
+    pub max_height_px: f32,
+    pub font_size_px: f32,
+    pub line_spacing: f32,
+    pub paragraph_spacing: f32,
+    pub first_line_indent: bool,
+    pub padding_left: f32,
+    pub padding_top: f32,
 }
 
 // ==================== 单元测试 ====================

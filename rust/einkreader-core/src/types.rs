@@ -37,11 +37,14 @@ pub struct EpubParseResult {
     pub images: std::collections::HashMap<String, String>,
 }
 
-/// EPUB 章节（含图片列表）
+/// EPUB 章节（含图片列表，内容按需加载）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EpubChapter {
     pub title: String,
-    pub content: String,
+    /// 内容：None 表示尚未加载（懒加载状态），已加载后填入
+    pub content: Option<String>,
     pub image_paths: Vec<String>,
     pub paragraph_types: Vec<i32>,
+    /// ZIP 内 XHTML 文件路径，用于按需加载（需序列化到客户端）
+    pub xhtml_path: Option<String>,
 }

@@ -16,7 +16,7 @@ if (!(Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 # 确保 Android 目标已安装
 Write-Host "=== Checking Rust Android targets ==="
-$targets = @("aarch64-linux-android", "armv7-linux-androideabi", "x86_64-linux-android", "i686-linux-android")
+$targets = @("aarch64-linux-android", "armv7-linux-androideabi")
 $installed = rustup target list --installed
 foreach ($t in $targets) {
     if ($installed -notcontains $t) {
@@ -54,11 +54,9 @@ cargo build --target armv7-linux-androideabi --release
 Write-Host "=== Copying .so files ==="
 $null = New-Item -ItemType Directory -Force (Join-Path $JniLibDir "arm64-v8a")
 $null = New-Item -ItemType Directory -Force (Join-Path $JniLibDir "armeabi-v7a")
-$null = New-Item -ItemType Directory -Force (Join-Path $JniLibDir "x86_64")
 
 Copy-Item "$CrateDir\target\aarch64-linux-android\release\libeinkreader_core.so" (Join-Path $JniLibDir "arm64-v8a")
 Copy-Item "$CrateDir\target\armv7-linux-androideabi\release\libeinkreader_core.so" (Join-Path $JniLibDir "armeabi-v7a")
-Copy-Item "$CrateDir\target\x86_64-linux-android\release\libeinkreader_core.so" (Join-Path $JniLibDir "x86_64")
 
 Write-Host "=== Done! ==="
 Get-ChildItem -Path $JniLibDir -Recurse -Filter "*.so" | Select-Object FullName, Length
