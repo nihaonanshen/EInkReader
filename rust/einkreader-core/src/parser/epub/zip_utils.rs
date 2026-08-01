@@ -80,3 +80,15 @@ pub(super) fn try_get_entry(archive: &mut ZipArchive<fs::File>, path: &str) -> S
     }
     String::new()
 }
+
+/// 二进制安全读取 ZIP 条目（用于图片等非 UTF-8 数据）
+/// 返回原始字节；条目不存在或超限时返回 None
+pub(super) fn read_zip_entry_bytes(archive: &mut ZipArchive<fs::File>, path: &str) -> Option<Vec<u8>> {
+    let mut entry = archive.by_name(path).ok()?;
+    if entry.size() > MAX_ENTRY_UNCOMPRESSED {
+        return None;
+    }
+    let mut buf = Vec::new();
+    entry.read_to_end(&mut buf).ok()?;
+    if buf.is_empty() { None } else { Some(buf) }
+}

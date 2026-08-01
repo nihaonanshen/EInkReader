@@ -711,7 +711,7 @@ class ReaderActivity : Activity() {
                         currentChapterIndex = sc
                         checkNotNull(readerView).setChapter(checkNotNull(chapters).get(currentChapterIndex))
                         // ★ 传递图片字节数据给 ReaderView，用于 [[IMAGE:path]] 渲染
-                        if (epubImageBytes != null && epubImageBytes is java.util.LinkedHashMap) {
+                        if (epubImageBytes != null) {
                             checkNotNull(readerView).setChapterImages(epubImageBytes)
                         }
                         checkNotNull(readerView).applySettings()

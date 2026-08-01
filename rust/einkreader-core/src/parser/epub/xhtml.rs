@@ -36,7 +36,8 @@ pub(super) struct XhtmlContent {
 }
 
 /// 解析 XHTML 内容，返回结构化数据
-pub(super) fn parse_xhtml(html: &str) -> XhtmlContent {
+/// base_dir: 章节 XHTML 文件在 ZIP 中的目录（如 "OEBPS/Text/"），用于解析相对图片路径
+pub(super) fn parse_xhtml(html: &str, base_dir: &str) -> XhtmlContent {
     if html.is_empty() {
         return XhtmlContent { text: String::new(), image_paths: Vec::new(), paragraph_types: Vec::new() };
     }
@@ -90,7 +91,14 @@ pub(super) fn parse_xhtml(html: &str) -> XhtmlContent {
                     "blockquote" => cur_type = PARA_BLOCKQUOTE,
                     "img" => {
                         if let Some(src) = extract_img_src(&html[i..]) {
-                            image_paths.push(src);
+                            // 解析为 ZIP 内绝对路径，并在文本流中插入 [[IMAGE:path]] 标记
+                            // （ReaderView 据此查找图片字节并渲染）
+                            let resolved = resolve_img_path(base_dir, &src);
+                            image_paths.push(resolved.clone());
+                            text.push_str("[[IMAGE:");
+                            text.push_str(&resolved);
+                            text.push_str("]]");
+                            para_has_content = true;
                         }
                     }
                     _ => {}
@@ -177,6 +185,42 @@ pub(super) fn parse_xhtml(html: &str) -> XhtmlContent {
     result = REGEX_TRAIL_SPACE_NL.replace_all(&result, "\n").to_string();
     let result = result.trim().to_string();
     XhtmlContent { text: result, image_paths, paragraph_types }
+}
+
+/// 将 img src 解析为 ZIP 内绝对路径
+///
+/// base_dir: 章节 XHTML 所在目录（如 "OEBPS/Text/"）
+/// src: <img src> 原始值（可能为相对路径、./、../、绝对路径或 http(s) URL）
+/// 返回归一化路径（反斜杠转正斜杠、去掉 ./、解析 ../、URL 解码）。
+/// 外链（http/https/data）与以 / 开头的路径原样返回（无法从 ZIP 读取）。
+fn resolve_img_path(base_dir: &str, src: &str) -> String {
+    let src = src.trim();
+    if src.is_empty() {
+        return String::new();
+    }
+    // 外链 / 绝对路径：原样返回
+    if src.starts_with("http://")
+        || src.starts_with("https://")
+        || src.starts_with("data:")
+        || src.starts_with('/')
+    {
+        return src.to_string();
+    }
+    let src = src.replace('\\', "/");
+    // 去掉 ./ 前缀
+    let src = src.strip_prefix("./").unwrap_or(&src);
+    // 拼接章节目录
+    let combined = format!("{}{}", base_dir, src);
+    // 逐段解析 ../（去掉上一级目录段）
+    let mut parts: Vec<&str> = Vec::new();
+    for seg in combined.split('/') {
+        if seg == ".." {
+            parts.pop();
+        } else if !seg.is_empty() && seg != "." {
+            parts.push(seg);
+        }
+    }
+    parts.join("/")
 }
 
 /// 从 img 标签中提取 src 属性
@@ -422,7 +466,7 @@ mod tests {
     fn test_parse_xhtml_chinese_not_mojibake() {
         // 回归：parse_xhtml 曾把 UTF-8 字节逐个 as char，导致中文双重编码乱码
         let html = "<html><body><h1>第一章 初入江湖</h1><p>他推开门走了进去。</p></body></html>";
-        let parsed = parse_xhtml(html);
+        let parsed = parse_xhtml(html, "");
         assert!(parsed.text.contains("第一章 初入江湖"), "got: {:?}", parsed.text);
         assert!(parsed.text.contains("他推开门走了进去"), "got: {:?}", parsed.text);
         // 每个字符都应是合法 Unicode 字符，不能是逐字节 Latin-1 形态
@@ -430,9 +474,31 @@ mod tests {
 
         // 带 BOM 的 XHTML（EPUB 常见）：BOM 应被剥离
         let html2 = "\u{feff}<?xml version=\"1.0\"?><html><body><p>中文内容</p></body></html>";
-        let parsed2 = parse_xhtml(html2);
+        let parsed2 = parse_xhtml(html2, "");
         assert!(!parsed2.text.starts_with('\u{feff}'), "BOM kept: {:?}", parsed2.text);
         assert!(parsed2.text.contains("中文内容"), "got: {:?}", parsed2.text);
+    }
+
+    #[test]
+    fn test_parse_xhtml_image_marker_and_resolve() {
+        // 图片应解析为 ZIP 绝对路径并插入 [[IMAGE:path]] 标记
+        let html = "<html><body><p>文字<img src=\"../Images/00005.jpeg\"/>结尾</p></body></html>";
+        let parsed = parse_xhtml(html, "OEBPS/Text/");
+        assert_eq!(parsed.image_paths, vec!["OEBPS/Images/00005.jpeg"]);
+        assert!(parsed.text.contains("[[IMAGE:OEBPS/Images/00005.jpeg]]"), "got: {:?}", parsed.text);
+        assert!(parsed.text.contains("文字"), "got: {:?}", parsed.text);
+        assert!(parsed.text.contains("结尾"), "got: {:?}", parsed.text);
+
+        // ./ 前缀与反斜杠
+        let html2 = "<p><img src=\"./fig1.png\"/></p>";
+        let parsed2 = parse_xhtml(html2, "Text/");
+        assert_eq!(parsed2.image_paths, vec!["Text/fig1.png"]);
+
+        // 外链保持原样
+        let html3 = "<p><img src=\"https://example.com/a.jpg\"/></p>";
+        let parsed3 = parse_xhtml(html3, "Text/");
+        assert_eq!(parsed3.image_paths, vec!["https://example.com/a.jpg"]);
+        assert!(parsed3.text.contains("[[IMAGE:https://example.com/a.jpg]]"));
     }
 
     #[test]
