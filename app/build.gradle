@@ -17,7 +17,9 @@ android {
         
         // ✅ [Phase 6] Android 4.4 核心库反编译要求启用 Multidex
         multiDexEnabled true
-
+        ndk {
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
+        }
         def enableRust = project.hasProperty('enableRust') ? project.enableRust.toBoolean() : false
         buildConfigField "boolean", "ENABLE_RUST", enableRust ? "true" : "false"
     }
@@ -47,6 +49,7 @@ android {
         release {
             signingConfig signingConfigs.release
             minifyEnabled true
+            shrinkResources true
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
         debug {
@@ -95,6 +98,8 @@ jacoco {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.20"
+    // ✅ [Phase 6] Android 4.4 多 dex 支持（EInkReaderApp 继承 MultiDexApplication）
+    implementation "androidx.multidex:multidex:2.0.1"
     // ✅ [Phase 6] Android 4.4 Java 8+ 核心库反编译支持（Lambda, Stream API等）
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.3"
     
