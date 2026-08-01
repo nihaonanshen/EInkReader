@@ -20,7 +20,7 @@ class ServiceLocator {
             if (_initialized) return
             Log.i(TAG, "Initializing ServiceLocator")
             _bookStorage = DatabaseHelper(app)
-            _bookStorage!!.initialize()
+            checkNotNull(_bookStorage).initialize()
             _readerRepository = ReaderRepositoryImpl(app.applicationContext, _bookStorage)
             _initialized = true
             Log.i(TAG, "ServiceLocator initialized")
@@ -28,12 +28,12 @@ class ServiceLocator {
 
         @JvmStatic fun getBookStorage(): BookStorage {
             if (_bookStorage == null) throw IllegalStateException("Not initialized. Call init() first.")
-            return _bookStorage!!
+            return checkNotNull(_bookStorage)
         }
 
         @JvmStatic fun getReaderRepository(): ReaderRepository {
             if (_readerRepository == null) throw IllegalStateException("Not initialized. Call init() first.")
-            return _readerRepository!!
+            return checkNotNull(_readerRepository)
         }
 
         @JvmStatic fun isInitialized(): Boolean = _initialized

@@ -36,8 +36,8 @@ import kotlin.math.min
 class ReaderView : View {
     // ==================== 排版设置 ====================
     private var textSize = 26f
-    private var lineSpacing = 1.5f
-    private var paragraphSpacing = 1.8f
+    private var lineSpacing = 1.25f
+    private var paragraphSpacing = 1.25f
     private var typeface: Typeface? = Typeface.DEFAULT
     private var bgColor = Color.WHITE
 
@@ -136,15 +136,16 @@ class ReaderView : View {
     }
 
     constructor(context: Context?, attrs: AttributeSet?) : super(context, attrs) {
+        init()
+    }
+
+    private fun init() {
+        // bitmapCache 在 init() 中初始化，保证单参/双参构造都可用（原实现仅双参构造初始化）
         bitmapCache = object : LruCache<String?, Bitmap?>(MAX_BITMAP_CACHE_BYTES) {
             override fun sizeOf(key: String?, value: Bitmap?): Int {
                 return value?.getByteCount() ?: 0
             }
         }
-        init()
-    }
-
-    private fun init() {
         setBackgroundColor(bgColor)
         density = getResources().getDisplayMetrics().density
         log("Init", "density=" + density)
@@ -190,9 +191,9 @@ class ReaderView : View {
         val area = Rect()
         getDrawingRect(area)
         var cacheHit = false
-        if (currentChapter != null && currentChapter!!.getContent() != null) {
+        if (currentChapter != null && currentChapter!!.content != null) {
             try {
-                val text = currentChapter!!.getContent()
+                val text = currentChapter!!.content
                 val w = getWidth()
                 val h = getHeight()
                 cacheHit = try {
@@ -213,29 +214,35 @@ class ReaderView : View {
 
     // ==================== 公开设置方法 ====================
     fun setTextSize(sp: Float) {
+        if (this.textSize == sp) return
         this.textSize = sp
         applySettings()
     }
 
     fun setLineSpacing(spacing: Float) {
+        if (this.lineSpacing == spacing) return
         this.lineSpacing = spacing
         applySettings()
     }
 
     fun setParagraphSpacing(spacing: Float) {
+        if (this.paragraphSpacing == spacing) return
         this.paragraphSpacing = spacing
         applySettings()
     }
 
     fun setFirstLineIndent(enable: Boolean) {
+        if (this.enableFirstLineIndent == enable) return
         this.enableFirstLineIndent = enable
         applySettings()
     }
 
     fun setHorizontalMargin(dp: Int) {
         val px = (dp * density + 0.5f).toInt()
+        val pr = ((dp + 4f) * density + 0.5f).toInt()
+        if (this.paddingLeft == px && this.paddingRight == pr) return
         this.paddingLeft = px
-        this.paddingRight = ((dp + 4f) * density + 0.5f).toInt()
+        this.paddingRight = pr
         applySettings()
     }
 
@@ -249,8 +256,10 @@ class ReaderView : View {
     }
 
     fun setCustomTypeface(tf: Typeface?) {
-        this.typeface = if (tf != null) tf else Typeface.DEFAULT
-        textPaint!!.setTypeface(this.typeface)
+        val newTf = if (tf != null) tf else Typeface.DEFAULT
+        if (this.typeface == newTf) return
+        this.typeface = newTf
+        checkNotNull(textPaint).setTypeface(this.typeface)
         applySettings()
     }
 
@@ -265,10 +274,12 @@ class ReaderView : View {
             mutedColor = -0x666667
         }
         setBackgroundColor(bgColor)
-        textPaint!!.setColor(fgColor)
-        pageNumPaint!!.setColor(mutedColor)
+        checkNotNull(textPaint).setColor(fgColor)
+        checkNotNull(pageNumPaint).setColor(mutedColor)
         if (!batchMode) invalidate()
     }
+
+    // ==================== 设置篇章 ====================
 
     fun setChapterImages(images: MutableMap<String?, ByteArray?>?) {
         for (bmp in bitmapCache!!.snapshot().values) {
@@ -417,7 +428,7 @@ class ReaderView : View {
         val contentHeight = ch
 
         // 获取内容
-        var content = chapter.getContent()
+        var content = chapter.content
         if (content == null) content = ""
         content = content.trim { it <= ' ' }
         if (content.isEmpty()) content = "(本章内容为空)"
@@ -436,7 +447,7 @@ class ReaderView : View {
                     for (lm in pd.lines) {
                         page.lines.add(
                             ReaderView.TextLine(
-                                lm.text!!,
+                                lm.text ?: "",
                                 lm.x,  // Rust 精确 x 坐标（像素）
                                 lm.y,  // Rust 精确 y 坐标（像素）
                                 ts,  // fontSize (sp)
@@ -501,7 +512,7 @@ class ReaderView : View {
         val paraSpacingPx = ts * dens * (ps - ls)
 
         val paragraphs = content.split("\\n".toRegex()).toTypedArray()
-        val paraTypes: MutableList<Int?> = chapter.getParagraphTypes().toMutableList()
+        val paraTypes: MutableList<Int?> = chapter.paragraphTypes.toMutableList()
 
         val resultPages: MutableList<Page?> = ArrayList<Page?>()
         var curPd = Page()
@@ -998,34 +1009,27 @@ class ReaderView : View {
         if (pageChangeListener != null) pageChangeListener!!.onPageChanged(currentPage, totalPages)
     }
 
-    /** 在 UI 线程解码当前页的图片（懒解码）  */
+    /** 在后台线程解码当前页的图片（懒解码） */
+    /** 在调用线程解码当前页的图片 */
     private fun decodeCurrentPageImages() {
         if (chapterImages == null || currentPage >= pages.size) return
         val p = pages.get(currentPage)
+        var needsInvalidate = false
         for (i in p.images.indices) {
-            val ib = p.images.get(i)
+            val ib = p.images[i]
             if (ib.bitmap != null || ib.path == null) continue
-            val imgData = chapterImages!!.get(ib.path)
-            if (imgData == null) continue
+            val imgData = chapterImages?.get(ib.path) ?: continue
             val bmp = BitmapFactory.decodeByteArray(imgData, 0, imgData.size)
             if (bmp == null) continue
-            val rw = ib.rect!!.width()
-            val rh = ib.rect!!.height()
+            val rw = ib.rect?.width() ?: continue
+            val rh = ib.rect?.height() ?: continue
             val scaled = Bitmap.createScaledBitmap(bmp, rw, rh, true)
             if (scaled != bmp) bmp.recycle()
             ib.bitmap = scaled
-            bitmapCache!!.put("img_" + (ib.path ?: System.identityHashCode(this)), scaled)
+            bitmapCache?.put("img_" + (ib.path ?: System.identityHashCode(this)), scaled)
+            needsInvalidate = true
         }
-    }
-
-    fun simulateLeftTap() {
-        if (currentPage > 0) prevPage()
-        else if (pageChangeListener != null) pageChangeListener!!.onNeedPrevChapter()
-    }
-
-    fun simulateRightTap() {
-        if (currentPage < totalPages - 1) nextPage()
-        else if (pageChangeListener != null) pageChangeListener!!.onNeedNextChapter()
+        if (needsInvalidate) invalidate()
     }
 
     companion object {
@@ -1042,3 +1046,4 @@ class ReaderView : View {
         private const val TEXT_SAFETY_MARGIN = 3.0f
     }
 }
+

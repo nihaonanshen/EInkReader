@@ -26,7 +26,7 @@ class BookListAdapter(
     private fun preloadProgress() {
         val bl = books ?: return
         val st = ServiceLocator.getBookStorage() ?: return
-        for (b in bl) b.preloadedProgress = st.loadProgress(b.fileKey!!)
+        for (b in bl) b.preloadedProgress = st.loadProgress(checkNotNull(b.fileKey))
     }
 
     override fun getCount(): Int = books?.size ?: 0
@@ -35,7 +35,7 @@ class BookListAdapter(
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
         val view = convertView ?: LayoutInflater.from(ctx).inflate(R.layout.item_book, parent, false)
-        val book = books!![position]
+        val book = books?.get(position) ?: return view
         val rec = book.dbRecord
 
         view.findViewById<TextView>(R.id.book_title).text = book.title
@@ -43,7 +43,7 @@ class BookListAdapter(
         val tvCover = view.findViewById<TextView>(R.id.book_cover)
         // ✅ [Phase 7] format 为 null 时从文件路径推断
         val isEpub = (rec != null && "epub".equals(rec.format, ignoreCase = true)) ||
-                     (rec?.filePath != null && rec.filePath!!.lowercase().endsWith(".epub"))
+                     (rec?.filePath != null && checkNotNull(rec.filePath).lowercase().endsWith(".epub"))
         if (isEpub) {
             tvCover.text = "EPUB"
             tvCover.setBackgroundColor(-0x46ab71.toInt())
@@ -80,7 +80,7 @@ class BookListAdapter(
         val tp = view.findViewById<TextView>(R.id.book_progress_text)
 
         if (ch >= 0 && tch > 0) {
-            val pct = ch * 100 / tch
+            val pct = (ch * 100f / tch).toInt()
             pb.progress = pct
             pb.visibility = View.VISIBLE
             tp.text = "已读 $pct% · 第${ch + 1}章/$tch 章"

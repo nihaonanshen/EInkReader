@@ -1,6 +1,5 @@
 package com.einkreader.ui.reader
 
-import android.os.Environment
 import java.io.File
 import java.io.FileOutputStream
 import java.io.OutputStreamWriter
@@ -10,6 +9,7 @@ import java.util.Locale
 
 object DebugLog {
     private val log = StringBuilder()
+    private var sAppContext: android.content.Context? = null
     private val sdf by lazy { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     private val dateFormat by lazy { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
     private var fileReady = false
@@ -20,7 +20,8 @@ object DebugLog {
     @JvmField var ENABLED = true
 
     @JvmStatic
-    fun init() {
+    fun init(context: android.content.Context) {
+        sAppContext = context.applicationContext
         log.setLength(0)
         ensureFile(true)
         logLine("===== EInkReader Debug Session ${dateFormat.format(Date())} =====")
@@ -59,7 +60,7 @@ object DebugLog {
     }
 
     @JvmStatic
-    fun getLog(): String = log.toString()
+    fun getLog(): String = synchronized(log) { log.toString() }
 
     @JvmStatic
     fun getLogFilePath(): String {
@@ -69,7 +70,10 @@ object DebugLog {
 
     @JvmStatic
     fun clear() {
-        log.setLength(0)
+        synchronized(log) {
+            log.setLength(0)
+            lastFlushedLength = 0
+        }
         ensureFile(true)
     }
 
@@ -80,38 +84,33 @@ object DebugLog {
     }
 
     private fun logLine(line: String) {
-        log.append(line).append('\n')
-        if (log.length > MAX_LOG_LEN) {
-            log.delete(0, log.length / 2)
-            lastFlushedLength = 0
+        synchronized(log) {
+            log.append(line).append('\n')
+            if (log.length > MAX_LOG_LEN) {
+                log.delete(0, log.length / 2)
+                lastFlushedLength = 0
+            }
         }
         android.util.Log.d("EInkReader", line)
     }
 
     private fun ensureFile(overwrite: Boolean) {
-        if (fileReady && logFile != null && logFile!!.exists() && !overwrite) return
+        if (fileReady && logFile != null && checkNotNull(logFile).exists() && !overwrite) return
+        val context = sAppContext
+        if (context == null) { fileReady = false; return }
         try {
-            // ✅ [Phase 3] 改用应用私有缓存目录而非公共 Download 目录，防止信息泄露
-            val dir = android.os.Environment.getExternalStorageDirectory()
-                ?: return
-            logFile = File(dir, "Android/data/com.einkreader/files/debug/${dateFormat.format(Date())}.log")
-            
+            // ✅ 应用专属外部目录（/sdcard/Android/data/<pkg>/files），无需存储权限、Android 11+ 也可访问
+            val dir = context.getExternalFilesDir(null) ?: context.filesDir
+            logFile = File(dir, "debug/${dateFormat.format(Date())}.log")
+
             // 确保父目录存在
-            logFile!!.parentFile?.mkdirs()
-            
-            if (overwrite && logFile!!.exists()) logFile!!.delete()
+            checkNotNull(logFile).parentFile?.mkdirs()
+
+            if (overwrite && checkNotNull(logFile).exists()) checkNotNull(logFile).delete()
             fileReady = true
         } catch (e: Exception) {
             android.util.Log.e("EInkReader", "ensureFile primary failed", e)
-            try {
-                // 如果公共目录不可写，回退到应用内部缓存目录
-                // 需要 Context 才能使用 getCacheDir()，此处仅记录错误
-                logFile = null
-                fileReady = false
-            } catch (e2: Exception) {
-                android.util.Log.e("EInkReader", "ensureFile fallback failed", e2)
-                fileReady = false
-            }
+            fileReady = false
         }
     }
 
@@ -120,15 +119,15 @@ object DebugLog {
         if (!fileReady) ensureFile(false)
         if (logFile == null) return
         try {
-            val data = log.toString()
-            val newData = data.substring(lastFlushedLength)
+            val data = synchronized(log) { log.toString() }
+            val newData = if (lastFlushedLength < data.length) data.substring(lastFlushedLength) else ""
             if (newData.isEmpty()) return
-            FileOutputStream(logFile!!, true).use { fos ->
+            FileOutputStream(checkNotNull(logFile), true).use { fos ->
                 OutputStreamWriter(fos, "UTF-8").use { writer ->
                     writer.write(newData)
                 }
             }
-            lastFlushedLength = data.length
+            synchronized(log) { lastFlushedLength = data.length }
         } catch (e: Exception) {
             android.util.Log.e("EInkReader", "flushToFile failed", e)
         }

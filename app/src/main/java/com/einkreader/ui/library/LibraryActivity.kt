@@ -18,7 +18,7 @@ import com.einkreader.ui.reader.DebugLog
 import com.einkreader.ui.settings.AboutActivity
 import java.io.File as JFile
 import java.util.ArrayList as JArrayList
-import java.util.Comparator
+
 
 class LibraryActivity : Activity() {
 
@@ -55,7 +55,7 @@ class LibraryActivity : Activity() {
         bookList.adapter = adapter
 
         bookList.onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
-            if (position in books.indices) openBook(books[position].file!!)
+            if (position in books.indices) openBook(checkNotNull(books[position].file))
         }
 
         bookList.setOnItemLongClickListener { _, _, position, _ ->
@@ -66,7 +66,7 @@ class LibraryActivity : Activity() {
                 setMessage("确定要删除这本书吗？")
                 setPositiveButton("删除") { _, _ ->
                     book.file?.delete()
-                    ServiceLocator.getBookStorage()?.deleteBook(book.fileKey!!)
+                    ServiceLocator.getBookStorage()?.deleteBook(checkNotNull(book.fileKey))
                     scanBooks()
                 }
                 setNegativeButton("取消", null)
@@ -111,13 +111,13 @@ class LibraryActivity : Activity() {
                 val filePath = rec.filePath ?: continue
                 val f = JFile(filePath)
                 if (!f.exists()) {
-                    storage.deleteBook(rec.fileKey!!)
+                    storage.deleteBook(checkNotNull(rec.fileKey))
                     DebugLog.log("Lib", "清理失效记录: $filePath")
                     continue
                 }
                 val info = BookInfo(f)
                 info.dbRecord = rec
-                dbMap[rec.fileKey!!] = info
+                dbMap[checkNotNull(rec.fileKey)] = info
             }
 
             val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -160,8 +160,10 @@ class LibraryActivity : Activity() {
 
             DebugLog.log("Lib", "扫描完成: ${books.size}本书 排序模式=$currentSortMode")
         } finally {
-            adapter.notifyDataSetChanged()
-            scanning = false
+            runOnUiThread {
+                adapter.notifyDataSetChanged()
+                scanning = false
+            }
         }
     }
 
@@ -213,7 +215,7 @@ class LibraryActivity : Activity() {
         val labels = recent.map { "${it.title}  ·  ${formatTime(it.dbRecord?.lastReadTime ?: 0)}" }.toTypedArray()
         AlertDialog.Builder(this).apply {
             setTitle("最近阅读")
-            setItems(labels) { _, which -> openBook(recent[which].file!!) }
+            setItems(labels) { _, which -> openBook(checkNotNull(recent[which].file)) }
             setNegativeButton("取消", null)
         }.show()
     }

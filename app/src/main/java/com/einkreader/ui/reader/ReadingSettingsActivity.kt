@@ -10,7 +10,8 @@ import java.io.File
 import java.io.FileFilter
 
 /**
- * ReadingSettingsActivity Kotlin version
+ * Reading Settings Activity - Kotlin version
+ * Uses button-based increment/decrement for all spacing values (fixes ink screen lag)
  */
 class ReadingSettingsActivity : Activity() {
 
@@ -20,13 +21,18 @@ class ReadingSettingsActivity : Activity() {
     }
 
     private lateinit var prefs: SharedPreferences
-    private lateinit var seekLineSpacing: SeekBar
-    private lateinit var seekParaSpacing: SeekBar
     private lateinit var labelTextSize: TextView
     private lateinit var labelLineSpacing: TextView
     private lateinit var labelParaSpacing: TextView
+    private lateinit var labelHorizontalMargin: TextView
     private lateinit var btnFontMinus: TextView
     private lateinit var btnFontPlus: TextView
+    private lateinit var btnLineMinus: TextView
+    private lateinit var btnLinePlus: TextView
+    private lateinit var btnParaMinus: TextView
+    private lateinit var btnParaPlus: TextView
+    private lateinit var btnMarginMinus: TextView
+    private lateinit var btnMarginPlus: TextView
     private lateinit var fontList: ListView
     private lateinit var switchFirstLineIndent: Switch
     private val fonts = mutableListOf<FontItem>()
@@ -38,17 +44,23 @@ class ReadingSettingsActivity : Activity() {
         setContentView(R.layout.activity_settings)
         prefs = getSharedPreferences("eink_reader_prefs", MODE_PRIVATE)
 
-        seekLineSpacing = findViewById(R.id.seek_line_spacing)
-        seekParaSpacing = findViewById(R.id.seek_para_spacing)
+        // Initialize UI elements
         labelTextSize = findViewById(R.id.label_text_size)
         labelLineSpacing = findViewById(R.id.label_line_spacing)
         labelParaSpacing = findViewById(R.id.label_para_spacing)
+        labelHorizontalMargin = findViewById(R.id.label_horizontal_margin)
         btnFontMinus = findViewById(R.id.btn_font_minus)
         btnFontPlus = findViewById(R.id.btn_font_plus)
+        btnLineMinus = findViewById(R.id.btn_line_minus)
+        btnLinePlus = findViewById(R.id.btn_line_plus)
+        btnParaMinus = findViewById(R.id.btn_para_minus)
+        btnParaPlus = findViewById(R.id.btn_para_plus)
+        btnMarginMinus = findViewById(R.id.btn_margin_minus)
+        btnMarginPlus = findViewById(R.id.btn_margin_plus)
         fontList = findViewById(R.id.font_list)
         switchFirstLineIndent = findViewById(R.id.switch_first_line_indent)
 
-        // Init first line indent
+        // --- First line indent ---
         val indentEnabled = prefs.getBoolean("first_line_indent", false)
         switchFirstLineIndent.isChecked = indentEnabled
         switchFirstLineIndent.setOnCheckedChangeListener { _, isChecked ->
@@ -56,36 +68,18 @@ class ReadingSettingsActivity : Activity() {
             setResult(RESULT_OK)
         }
 
-        // Horizontal margin
-        val seekHM = findViewById<SeekBar>(R.id.seek_horizontal_margin)
-        val labelHM = findViewById<TextView>(R.id.label_horizontal_margin)
-        val savedMargin = prefs.getInt("horizontal_margin", 10)
-        seekHM.progress = savedMargin
-        labelHM.text = savedMargin.toString()
-        seekHM.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar, newProgress: Int, fromUser: Boolean) {
-                var p = newProgress
-                if (p < 10) p = 10
-                if (p > 60) p = 60
-                seekHM.progress = p
-                labelHM.text = p.toString()
-                prefs.edit().putInt("horizontal_margin", p).apply()
-            }
-            override fun onStartTrackingTouch(s: SeekBar) {}
-            override fun onStopTrackingTouch(s: SeekBar) { setResult(RESULT_OK) }
-        })
-
-        // Init sizes
+        // --- Load saved settings ---
         val savedTextSize = prefs.getFloat("text_size", 28f).toInt()
-        val savedLS = prefs.getInt("line_spacing", 15)
-        val savedPS = prefs.getInt("para_spacing", 18)
-        seekLineSpacing.setProgress(savedLS)
-        seekParaSpacing.setProgress(savedPS)
-        labelTextSize.text = savedTextSize.toString()
-        labelLineSpacing.text = String.format("%.1f", savedLS / 10f)
-        labelParaSpacing.text = String.format("%.1f", savedPS / 10f)
+        val savedLS = prefs.getInt("line_spacing", 130)   // 1.30 default (×100 for 0.01 precision)
+        val savedPS = prefs.getInt("para_spacing", 130)   // 1.30 default
+        val savedHM = prefs.getInt("horizontal_margin", 10)
 
-        // Font size buttons
+        labelTextSize.text = savedTextSize.toString()
+        labelLineSpacing.text = String.format("%.2f", savedLS / 100f)
+        labelParaSpacing.text = String.format("%.2f", savedPS / 100f)
+        labelHorizontalMargin.text = savedHM.toString()
+
+        // --- Text size buttons (±1 step) ---
         btnFontMinus.setOnClickListener {
             val cur = prefs.getFloat("text_size", 28f)
             val next = maxOf(14f, cur - 1)
@@ -101,38 +95,58 @@ class ReadingSettingsActivity : Activity() {
             setResult(RESULT_OK)
         }
 
-        // Line spacing seekbar
-        seekLineSpacing.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar, progress: Int, fromUser: Boolean) {
-                var p = progress
-                if (p < 10) p = 10
-                if (p > 30) p = 30
-                seekLineSpacing.progress = p
-                labelLineSpacing.text = String.format("%.1f", progress / 10f)
-                prefs.edit().putInt("line_spacing", progress).apply()
-            }
-            override fun onStartTrackingTouch(s: SeekBar) {}
-            override fun onStopTrackingTouch(s: SeekBar) { setResult(RESULT_OK) }
-        })
+        // --- Line spacing buttons (step = 0.01, range 0.1-3.0 → 10-300) ---
+        fun updateLineSpacing(value: Int) {
+            val clamped = value.coerceIn(10, 300)
+            labelLineSpacing.text = String.format("%.2f", clamped / 100f)
+            prefs.edit().putInt("line_spacing", clamped).apply()
+            setResult(RESULT_OK)
+        }
+        btnLineMinus.setOnClickListener {
+            val current = prefs.getInt("line_spacing", 130)
+            updateLineSpacing(current - 1)
+        }
+        btnLinePlus.setOnClickListener {
+            val current = prefs.getInt("line_spacing", 130)
+            updateLineSpacing(current + 1)
+        }
 
-        // Paragraph spacing seekbar
-        seekParaSpacing.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(s: SeekBar, progress: Int, fromUser: Boolean) {
-                var p = progress
-                if (p < 10) p = 10
-                if (p > 30) p = 30
-                seekParaSpacing.progress = p
-                labelParaSpacing.text = String.format("%.1f", progress / 10f)
-                prefs.edit().putInt("para_spacing", progress).apply()
-            }
-            override fun onStartTrackingTouch(s: SeekBar) {}
-            override fun onStopTrackingTouch(s: SeekBar) { setResult(RESULT_OK) }
-        })
+        // --- Paragraph spacing buttons (step = 0.01, range 0.1-3.0) ---
+        fun updateParaSpacing(value: Int) {
+            val clamped = value.coerceIn(10, 300)
+            labelParaSpacing.text = String.format("%.2f", clamped / 100f)
+            prefs.edit().putInt("para_spacing", clamped).apply()
+            setResult(RESULT_OK)
+        }
+        btnParaMinus.setOnClickListener {
+            val current = prefs.getInt("para_spacing", 130)
+            updateParaSpacing(current - 1)
+        }
+        btnParaPlus.setOnClickListener {
+            val current = prefs.getInt("para_spacing", 130)
+            updateParaSpacing(current + 1)
+        }
 
-        // Scan fonts
+        // --- Horizontal margin buttons (step = 1, range 10-60) ---
+        fun updateMargin(value: Int) {
+            val clamped = value.coerceIn(10, 60)
+            labelHorizontalMargin.text = clamped.toString()
+            prefs.edit().putInt("horizontal_margin", clamped).apply()
+            setResult(RESULT_OK)
+        }
+        btnMarginMinus.setOnClickListener {
+            val current = prefs.getInt("horizontal_margin", 10)
+            updateMargin(current - 1)
+        }
+        btnMarginPlus.setOnClickListener {
+            val current = prefs.getInt("horizontal_margin", 10)
+            updateMargin(current + 1)
+        }
+
+        // --- Scan fonts ---
         scanFonts()
 
-        // Font list click listener
+        // --- Font list click listener ---
         fontList.setOnItemClickListener { parent, view, position, id ->
             if (position < 0 || position >= fonts.size) return@setOnItemClickListener
             val font = fonts[position]
@@ -171,5 +185,6 @@ class ReadingSettingsActivity : Activity() {
                 fonts.add(FontItem(display, f.absolutePath))
             }
         }
+        fonts.sortBy { it.displayName.lowercase() }
     }
 }

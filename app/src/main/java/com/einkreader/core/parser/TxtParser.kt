@@ -2,7 +2,7 @@ package com.einkreader.core.parser
 
 import android.util.Log
 import com.einkreader.core.model.Chapter
-import com.einkreader.utils.EncodingDetector
+import com.einkreader.core.NativeBridge
 import java.io.BufferedReader
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -35,7 +35,7 @@ class TxtParser {
         // ===== 章节标题正则（综合版，覆盖主流中文小说格式）=====
         @JvmField
         val CHAPTER_PATTERN: Pattern = Pattern.compile(
-            "^[\\s\\u3000]*[【\\-―※（(\\[{]*" +
+            "^[\\s\\u3000]*[【\\-―※（(\\[]*" +
             "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]" +
             "[）)〕\\]}]?[\\s\\u3000]*" +
             "(?:[】\\-―※]*[\\s\\u3000]*(\\S.*))?" +
@@ -44,7 +44,7 @@ class TxtParser {
 
         @JvmField
         val LOOSE_CHAPTER_PATTERN: Pattern = Pattern.compile(
-            "^\\s*第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]"
+            "^\\s*第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]$"
         )
 
         // 新增：匹配英文 Chapter 1 / Chapter One / Ch.1 格式
@@ -65,44 +65,45 @@ class TxtParser {
         @JvmField
         val SPECIAL_CHAPTER_PATTERN: Pattern = Pattern.compile(
             "^[\\s\\u3000]*(?:楔子|序章|序言|引子|前言|前奏|序幕|开篇|开场|写在前面|题记)" +
-            "[\\s\\u3000]*(?:[\\S\\uff20].*)?[\\s\\u3000]*$|" +
-            "^[\\s\\u3000]*(?:后记|尾声|终章|结局|结语|番外|外传|特别篇|附录|附注|致谢|序章)" +
-            "[\\s\\u3000]*(?:[\\S\\uff20].*)?[\\s\\u3000]*$"
+            "[\\s\\u3000]*(?:[\\S\\u3000].*)?[\\s\\u3000]*$|" +
+            "^[\\s\\u3000]*(?:后记|尾声|终章|结局|结语|番外|外传|特别篇|附录|附注|致谢)" +
+            "[\\s\\u3000]*(?:[\\S\\u3000].*)?[\\s\\u3000]*$"
         )
 
         // 编码回退列表
         val FALLBACK_ENCODINGS = arrayOf("GBK", "GB18030", "UTF-8", "Big5", "GB2312")
 
-        // 收紧：匹配纯数字章节
+        // 收紧：匹配纯数字章节（数字+分隔符+汉字标题）。
+        // 阿拉伯数字编号只允许顿号/句点分隔且标题至少 8 字，避免把正文数字列表（如"1.他们来了"、"3.然后搅拌均匀"）误判为章节；
+        // 中文数字编号（一、/一百零八、）在正文中罕见，保留空格分隔，标题至少 2 字。
         @JvmField
         val NUM_CHAPTER_PATTERN: Pattern = Pattern.compile(
-            "^[\\s\\u3000]*" +
-            "(?:[零一二三四五六七八九十百千万亿]{1,3}|[\\d]{1,3})" +
-            "[、．.\\s\\uff20]" +
-            "[\\u4e00-\\u9fff]{1,30}" +
-            "[\\s\\u3000]*$"
+            "^[\\s\\u3000]*(?:" +
+            "[零一二三四五六七八九十百千万亿]{1,8}[、．.\\s\\u3000][\\u4e00-\\u9fff]{2,30}" +
+            "|[\\d]{1,3}[、．.][\\u4e00-\\u9fff]{8,30}" +
+            ")[\\s\\u3000]*$"
         )
 
         // 装饰性标题
         @JvmField
         val DECORATED_CHAPTER_PATTERN: Pattern = Pattern.compile(
             "^[\\s\\u3000]*" +
-            "[\\u2500-\\u257F\\u25c6\\u25c7\\u25ce\\u25b2\\u25b3\\u25bd\\u25bc\\u25cb\\u25cf\\u25a1\\u25a4\\u2606\\u2605\\u203c\\u2049\\u2a2f\\u2217\\u2261\\u005f\\-\\s\\uff20]{0,15}" +
+            "[\\u2500-\\u257F\\u25c6\\u25c7\\u25ce\\u25b2\\u25b3\\u25bd\\u25bc\\u25cb\\u25cf\\u25a1\\u25a4\\u2606\\u2605\\u203b\\u203c\\u2049\\u2a2f\\u2217\\u2261\\u005f\\u002a\\u0023\\-\\s\\u3000]{0,15}" +
             "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]" +
             ".*$"
         )
 
-        // 第X章必须在行首附近
+        // 第X章必须在行首附近（补齐 .*$ 尾部，使整行匹配语义下能带副标题/后缀）
         @JvmField
         val ANYWHERE_CHAPTER_PATTERN: Pattern = Pattern.compile(
-            "^[\\s\\u3000\\u2500-\\u257F\\u25c6\\u25c7\\u25ce\\u25b2\\u25b3\\u25bd\\u25bc\\u25cb\\u25cf\\u25a1\\u25a4\\u2606\\u2605\\u203c\\u2049\\u2a2f\\u2217\\u2261\\u005f\\-]{0,10}" +
-            "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]"
+            "^[\\s\\u3000\\u2500-\\u257F\\u25c6\\u25c7\\u25ce\\u25b2\\u25b3\\u25bd\\u25bc\\u25cb\\u25cf\\u25a1\\u25a4\\u2606\\u2605\\u203b\\u203c\\u2049\\u2a2f\\u2217\\u2261\\u005f\\u002a\\u0023\\-]{0,10}" +
+            "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折].*$"
         )
 
         // 严格版模式
         @JvmField
         val STRICT_CN_PATTERN: Pattern = Pattern.compile(
-            "^[\\s\\u3000]*[【\\-―※（(\\[{]*" +
+            "^[\\s\\u3000]*[【\\-―※（(\\[]*" +
             "第[零一二三四五六七八九十百千万亿\\d]{1,8}[章节回卷集篇部折]" +
             "[）)〕\\]}]?[\\s\\u3000]*" +
             "(?:[】\\-―※]*[\\s\\u3000]*(\\S.*))?" +
@@ -116,6 +117,27 @@ class TxtParser {
             "(?:[.\\-:\\s]+[A-Za-z].*)?[\\s\\u3000]*$"
         )
 
+        // 🔥 组合正则（所有8种模式合并为一个），消除 O(n×m) 多次匹配
+        @JvmField
+        val COMBINED_CHAPTER_PATTERN: Pattern = Pattern.compile(
+            "(?:" + CHAPTER_PATTERN.pattern() + ")|" +
+            "(?:" + LOOSE_CHAPTER_PATTERN.pattern() + ")|" +
+            "(?:" + ENG_CHAPTER_PATTERN.pattern() + ")|" +
+            "(?:" + SPECIAL_CHAPTER_PATTERN.pattern() + ")|" +
+            "(?:" + VOLUME_PATTERN.pattern() + ")|" +
+            "(?:" + NUM_CHAPTER_PATTERN.pattern() + ")|" +
+            "(?:" + DECORATED_CHAPTER_PATTERN.pattern() + ")|" +
+            "(?:" + ANYWHERE_CHAPTER_PATTERN.pattern() + ")"
+        )
+
+        // 🔥 严格模式组合正则
+        @JvmField
+        val COMBINED_STRICT_PATTERN: Pattern = Pattern.compile(
+            "(?:" + STRICT_CN_PATTERN.pattern() + ")|" +
+            "(?:" + STRICT_EN_PATTERN.pattern() + ")|" +
+            "(?:" + SPECIAL_CHAPTER_PATTERN.pattern() + ")"
+        )
+
         // 缓存目录
         private var sCacheBaseDir: File? = null
 
@@ -125,8 +147,8 @@ class TxtParser {
         @JvmStatic
         fun initCacheDir(appCacheDir: File) {
             sCacheBaseDir = File(appCacheDir, CACHE_DIR_NAME)
-            if (!sCacheBaseDir!!.exists() && !sCacheBaseDir!!.mkdirs()) {
-                Log.w(TAG, "缓存目录创建失败: ${sCacheBaseDir!!.absolutePath}")
+            if (!checkNotNull(sCacheBaseDir).exists() && !checkNotNull(sCacheBaseDir).mkdirs()) {
+                Log.w(TAG, "缓存目录创建失败: ${checkNotNull(sCacheBaseDir).absolutePath}")
             }
         }
 
@@ -189,7 +211,7 @@ class TxtParser {
             val encoding = if (forcedEncoding != null && forcedEncoding.isNotEmpty()) {
                 forcedEncoding
             } else {
-                EncodingDetector.detect(fileBytes, fileBytes.size)
+                NativeBridge.bridgeInstance.detectEncoding(fileBytes, fileBytes.size)
             }
             result.encoding = encoding
 
@@ -225,19 +247,31 @@ class TxtParser {
             val chapterTitles: MutableList<String> = ArrayList()
             val detectedCount = scanChapterTitles(fullText, lineOffsets, chapterBreaks, chapterTitles, false)
 
-            // 后处理：如果检测到章节数量异常多，切换到严格模式
+            // 后处理：如果检测到章节数量异常多，或相邻章节间隔过密，可能误判。
+            // 保留宽松模式结果，用严格模式重扫；仅当严格模式标题数显著减少（确认宽松误判）时才采用严格结果，
+            // 避免 200+ 章的长篇小说（网文常见）被误切后丢失 "VOL.1" 等宽松格式标题。
             if (detectedCount > 200 || hasSuspiciousDensity(chapterBreaks, lineCount)) {
-                com.einkreader.ui.reader.DebugLog.log("Txt", "章节密度异常 ($detectedCount)，切换到严格模式")
+                com.einkreader.ui.reader.DebugLog.log("Txt", "章节密度异常 ($detectedCount)，尝试严格模式重扫")
+                val looseBreaks: MutableList<IntArray> = ArrayList(chapterBreaks)
+                val looseTitles: MutableList<String> = ArrayList(chapterTitles)
                 chapterBreaks.clear()
                 chapterTitles.clear()
-                scanChapterTitles(fullText, lineOffsets, chapterBreaks, chapterTitles, true)
+                val strictCount = scanChapterTitles(fullText, lineOffsets, chapterBreaks, chapterTitles, true)
+                if (strictCount * 10 > looseBreaks.size * 9) {
+                    // 严格模式没有显著减少 → 大概率是真实长书，保留宽松结果
+                    chapterBreaks.clear()
+                    chapterTitles.clear()
+                    chapterBreaks.addAll(looseBreaks)
+                    chapterTitles.addAll(looseTitles)
+                }
             }
             if (chapterBreaks.isNotEmpty()) {
                 val last = chapterBreaks[chapterBreaks.size - 1]
                 last[1] = lineCount
             }
 
-            // 合并多行标题
+            // 合并多行标题：仅当下一行是"短副标题"形态才合并（不含句读/引号/括号标点、
+            // 不以句末标点结尾、长度 <= 12）。防止 "第X章" 独占行 + 正文紧跟时把正文第一行吞进标题。
             for (i in chapterTitles.indices) {
                 val title = chapterTitles[i] ?: continue
                 if (title.length < 12 && LOOSE_CHAPTER_PATTERN.matcher(title).matches()) {
@@ -246,8 +280,9 @@ class TxtParser {
                     if (firstContentLine >= 0 && firstContentLine < lineCount) {
                         val nextLine = extractLine(fullText, lineOffsets, firstContentLine)
                         val trimmedNext = nextLine.trim()
-                        if (trimmedNext.isNotEmpty() && trimmedNext.length < 80 &&
-                            !isChapterTitle(trimmedNext) && !trimmedNext.startsWith("[[IMAGE:")) {
+                        if (trimmedNext.isNotEmpty() && trimmedNext.length <= 12 &&
+                            !isChapterTitle(trimmedNext) && !trimmedNext.startsWith("[[IMAGE:") &&
+                            !trimmedNext.any { it in "。，！？；、：…“”‘’\"'「」『』()（）" }) {
                             chapterTitles[i] = title + " " + trimmedNext
                             breaks[0] = firstContentLine + 1
                         }
@@ -399,23 +434,16 @@ class TxtParser {
             if (line.isNullOrEmpty()) return false
             val trimmed = line.trim()
             if (trimmed.length > 80) return false
-            return CHAPTER_PATTERN.matcher(trimmed).matches() ||
-                    LOOSE_CHAPTER_PATTERN.matcher(trimmed).matches() ||
-                    ENG_CHAPTER_PATTERN.matcher(trimmed).matches() ||
-                    SPECIAL_CHAPTER_PATTERN.matcher(trimmed).matches() ||
-                    VOLUME_PATTERN.matcher(trimmed).matches() ||
-                    NUM_CHAPTER_PATTERN.matcher(trimmed).matches() ||
-                    DECORATED_CHAPTER_PATTERN.matcher(trimmed).matches() ||
-                    ANYWHERE_CHAPTER_PATTERN.matcher(trimmed).matches()
+            // 使用单一组合正则，覆盖所有章节标题格式
+            return COMBINED_CHAPTER_PATTERN.matcher(trimmed).matches()
         }
 
         private fun isStrictChapterTitle(line: String?): Boolean {
             if (line.isNullOrEmpty()) return false
             val trimmed = line.trim()
             if (trimmed.length > 80) return false
-            return STRICT_CN_PATTERN.matcher(trimmed).matches() ||
-                    STRICT_EN_PATTERN.matcher(trimmed).matches() ||
-                    SPECIAL_CHAPTER_PATTERN.matcher(trimmed).matches()
+            // 使用严格模式组合正则
+            return COMBINED_STRICT_PATTERN.matcher(trimmed).matches()
         }
 
         private fun extractChapterTitle(line: String?): String {
@@ -423,14 +451,10 @@ class TxtParser {
             val trimmed = line.trim()
             if (trimmed.isEmpty()) return trimmed
             if (trimmed.length > 80) return ""
-            if (CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed
-            if (LOOSE_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed
-            if (ENG_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed
-            if (SPECIAL_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed
-            if (VOLUME_PATTERN.matcher(trimmed).matches()) return trimmed
-            if (NUM_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed
-            if (DECORATED_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed
-            if (ANYWHERE_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed
+            // 使用单一组合正则提取标题
+            if (COMBINED_CHAPTER_PATTERN.matcher(trimmed).matches()) return trimmed
+            // 宽松模式未命中时回退严格模式（覆盖 "Chapter 三" 等严格支持、宽松不支持的格式）
+            if (COMBINED_STRICT_PATTERN.matcher(trimmed).matches()) return trimmed
             return ""
         }
 
@@ -585,3 +609,4 @@ class TxtParser {
         }
     }
 }
+

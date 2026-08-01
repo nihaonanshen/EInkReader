@@ -63,7 +63,7 @@ class DebugLogActivity : Activity() {
             typeface = Typeface.MONOSPACE
             setPadding(dp(8), dp(8), dp(8), dp(8))
         }
-        scroll.addView(logView!!)
+        scroll.addView(checkNotNull(logView))
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
         setContentView(root)

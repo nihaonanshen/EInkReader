@@ -76,8 +76,8 @@ class EinkRefreshManager(context: Context) {
                 add(RefreshMode.A2_FAST)
                 add(RefreshMode.DU_MINIMAL)
             }
-            callback!!.onModeDetected(modes)
-            if (!reflectionReady) callback!!.onSysfsUnavailable()
+            checkNotNull(callback).onModeDetected(modes)
+            if (!reflectionReady) checkNotNull(callback).onSysfsUnavailable()
         }
     }
 
@@ -197,7 +197,7 @@ class EinkRefreshManager(context: Context) {
             return try {
                 setModeMethod?.invoke(einkManagerInstance, getNookModeCode(mode))
                 if (updateRegionMethod != null) {
-                    updateRegionMethod!!.invoke(einkManagerInstance,
+                    checkNotNull(updateRegionMethod).invoke(einkManagerInstance,
                         area.left, area.top, area.right, area.bottom,
                         getNookModeCode(mode))
                 }
@@ -212,9 +212,9 @@ class EinkRefreshManager(context: Context) {
 
     private fun writeSysfs(modeCode: Int): Boolean {
         return try {
-            val fw = java.io.FileWriter("/sys/class/graphics/fb0/epd_mode")
-            fw.write(modeCode.toString())
-            fw.close()
+            java.io.FileWriter("/sys/class/graphics/fb0/epd_mode").use { fw ->
+                fw.write(modeCode.toString())
+            }
             true
         } catch (e: Exception) {
             false

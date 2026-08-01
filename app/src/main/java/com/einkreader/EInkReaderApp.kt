@@ -1,8 +1,7 @@
 package com.einkreader
 
-import android.app.Application
+
 import androidx.multidex.MultiDexApplication
-import com.einkreader.core.parser.EpubParser
 import com.einkreader.core.parser.TxtParser
 import com.einkreader.di.ServiceLocator
 
@@ -11,7 +10,6 @@ class EInkReaderApp : MultiDexApplication() {
     override fun onCreate() {
         super.onCreate()
         TxtParser.initCacheDir(cacheDir)
-        EpubParser.initCacheDir(cacheDir)
         ServiceLocator.init(this)
     }
 }

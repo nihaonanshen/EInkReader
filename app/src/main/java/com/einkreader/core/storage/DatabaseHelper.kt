@@ -148,7 +148,7 @@ class DatabaseHelper(
 
     override fun saveProgress(progress: BookStorage.BookProgress) {
         if (progress.fileKey == null) return
-        progressCache.put(progress.fileKey!!, progress)
+        progressCache.put(checkNotNull(progress.fileKey), progress)
         val db = writableDatabase
         try {
             db.beginTransaction()
@@ -162,7 +162,7 @@ class DatabaseHelper(
             db.insertWithOnConflict("progress", null, cv, CONFLICT_REPLACE)
             val bcv = android.content.ContentValues()
             bcv.put(KEY_LAST_READ_TIME, System.currentTimeMillis())
-            db.update("books", bcv, "$KEY_FILE_KEY=?", arrayOf(progress.fileKey!!))
+            db.update("books", bcv, "$KEY_FILE_KEY=?", arrayOf(checkNotNull(progress.fileKey)))
             db.setTransactionSuccessful()
         } catch (e: Exception) {
             DebugLog.log(TAG, "saveProgress failed: ${e.message}")

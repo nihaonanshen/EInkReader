@@ -7,7 +7,7 @@ import android.util.Log
 import com.einkreader.core.FeatureFlags
 import com.einkreader.core.NativeBridge
 import com.einkreader.core.model.Chapter
-import com.einkreader.core.parser.EpubParser
+
 import com.einkreader.core.parser.TxtParser
 import com.einkreader.core.storage.BookStorage
 import java.io.File
@@ -52,21 +52,18 @@ class ReaderRepositoryImpl(
             if (isEpub) {
                 val r = if (isContent && fileUri != null) {
                     val tf = copyToTempFile(fileUri, ".epub")
-                    var result: EpubParser.EpubResult? = null
-                    try {
+                    val epubResult = try {
                         if (tf == null) {
                             Log.e(TAG, "Failed to copy temp EPUB file from URI: $fileUri")
-                            return BookResult(emptyList(), emptyMap(), "", fileKey, 0, 0)
+                            null
                         } else {
-                            result = if (FeatureFlags.useRustEpubParser()) NativeBridge.bridgeInstance.parseEpub(tf)
-                            else EpubParser.parse(tf)
+                            NativeBridge.bridgeInstance.parseEpub(tf)
                         }
                     } finally { tf?.delete() }
-                    result!!
+                    epubResult
                 } else {
                     val f = File(fp)
-                    if (FeatureFlags.useRustEpubParser()) NativeBridge.bridgeInstance.parseEpub(f)
-                    else EpubParser.parse(f)
+                    NativeBridge.bridgeInstance.parseEpub(f)
                 }
                 if (r != null) {
                     chapters = r.chapters
@@ -76,17 +73,15 @@ class ReaderRepositoryImpl(
             } else if (isTxt) {
                 val r = if (isContent && fileUri != null) {
                     val tf = copyToTempFile(fileUri, ".txt")
-                    var result: TxtParser.ParseResult? = null
-                    try {
-                        if (tf == null) {
-                            Log.e(TAG, "Failed to copy temp TXT file from URI: $fileUri")
-                            BookResult(emptyList(), emptyMap(), bookTitle ?: "", fileKey, 0, 0)
-                        } else {
-                            result = if (FeatureFlags.useRustTxtParser()) NativeBridge.bridgeInstance.parseTxt(tf)
+                    if (tf == null) {
+                        Log.e(TAG, "Failed to copy temp TXT file from URI: $fileUri")
+                        null
+                    } else {
+                        try {
+                            if (FeatureFlags.useRustTxtParser()) NativeBridge.bridgeInstance.parseTxt(tf)
                             else TxtParser.parse(tf)
-                        }
-                    } finally { tf?.delete() }
-                    result!!
+                        } finally { tf.delete() }
+                    }
                 } else {
                     val f = File(fp)
                     if (FeatureFlags.useRustTxtParser()) NativeBridge.bridgeInstance.parseTxt(f)
