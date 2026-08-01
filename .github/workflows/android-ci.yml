@@ -2,9 +2,9 @@ name: Android CI/CD Pipeline
 
 on:
   push:
-    branches: [main, dev, migrate-kotlin]
+    branches: [main, dev]
   pull_request:
-    branches: [main, dev, migrate-kotlin]
+    branches: [main, dev]
 
 jobs:
   build:
@@ -21,11 +21,19 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: Set up Rust (with Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Build Rust core (.so) for Android
+        run: bash rust/build-rust.sh
+
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --info
+        run: ./gradlew testDebugUnitTest
 
       - name: Build APK (debug)
         run: ./gradlew assembleDebug
@@ -39,7 +47,7 @@ jobs:
 
   rust-check:
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4

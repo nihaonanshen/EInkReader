@@ -21,8 +21,16 @@ jobs:
           distribution: 'temurin'
           cache: gradle
 
+      - name: Set up Rust (with Android targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android, armv7-linux-androideabi
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
+
+      - name: Build Rust core (.so) for Android
+        run: bash rust/build-rust.sh
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug
@@ -32,16 +40,8 @@ jobs:
         env:
           SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
-          SIGNING_STORE_FILE: einkreader.jks
-        run: |
-          # Create key.properties file from environment variables
-          echo "storeFile=${SIGNING_STORE_FILE}" > key.properties
-          echo "storePassword=${SIGNING_STORE_PASSWORD}" >> key.properties
-          echo "keyPassword=${SIGNING_KEY_PASSWORD}" >> key.properties
-          echo "keyAlias=einkreader" >> key.properties
-
-          # Build release
-          ./gradlew assembleRelease
+          SIGNING_STORE_FILE: ${{ secrets.SIGNING_STORE_FILE }}
+        run: ./gradlew assembleRelease
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
