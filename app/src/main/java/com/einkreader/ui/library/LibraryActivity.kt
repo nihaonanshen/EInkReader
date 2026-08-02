@@ -51,7 +51,21 @@ class LibraryActivity : Activity() {
 
         findViewById<TextView>(R.id.btn_recent).setOnClickListener { showRecentBooks() }
 
-        adapter = BookListAdapter(this, books)
+        // 夜间模式：书库背景与文字（与阅读页一致的黑底灰字）
+        val night = getSharedPreferences(PREFS_NAME, MODE_PRIVATE).getBoolean("night_mode", false)
+        if (night) {
+            val root = findViewById<android.view.View>(android.R.id.content)
+            root.setBackgroundColor(-0xddddde) // 0xFF222222
+            val fg = -0x444445 // 0xFFBBBBBB
+            for (id in intArrayOf(
+                R.id.btn_import, R.id.btn_recent, R.id.btn_sort, R.id.btn_refresh_settings, R.id.btn_about
+            )) {
+                val v = findViewById<android.view.View>(id)
+                if (v is TextView) v.setTextColor(fg)
+            }
+        }
+
+        adapter = BookListAdapter(this, books, night)
         bookList.adapter = adapter
 
         bookList.onItemClickListener = AdapterView.OnItemClickListener { _, _, position, _ ->
@@ -264,7 +278,12 @@ class LibraryActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        if (books.isEmpty()) scanBooks()
+        // 从阅读页返回时可能有新的封面缓存，始终刷新列表
+        if (books.isEmpty()) {
+            scanBooks()
+        } else {
+            adapter.notifyDataSetChanged()
+        }
     }
 
     class BookInfo(@JvmField val file: JFile?) {

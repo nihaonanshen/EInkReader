@@ -2,10 +2,12 @@ package com.einkreader.ui.library
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.BitmapFactory
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.BaseAdapter
+import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import com.einkreader.EInkReaderApp
@@ -15,11 +17,15 @@ import java.io.File as JavaFile
 
 class BookListAdapter(
     context: Context,
-    private var books: List<LibraryActivity.BookInfo>? = null
+    private var books: List<LibraryActivity.BookInfo>? = null,
+    private val nightMode: Boolean = false
 ) : BaseAdapter() {
 
     private val ctx = context.applicationContext
     private val prefs: SharedPreferences = ctx.getSharedPreferences("eink_reader_prefs", Context.MODE_PRIVATE)
+
+    /** 封面位图内存缓存（按封面文件路径），避免滚动时主线程重复解码 */
+    private val coverBitmapCache = HashMap<String, android.graphics.Bitmap?>()
 
     init { preloadProgress() }
 
@@ -38,18 +44,44 @@ class BookListAdapter(
         val book = books?.get(position) ?: return view
         val rec = book.dbRecord
 
+        // 夜间模式：列表项背景 + 文字
+        if (nightMode) {
+            view.setBackgroundColor(-0xddddde)
+            view.findViewById<TextView>(R.id.book_title).setTextColor(-0x444445)
+            view.findViewById<TextView>(R.id.book_info).setTextColor(-0x555556)
+            view.findViewById<TextView>(R.id.book_progress_text).setTextColor(-0x444445)
+        }
+
         view.findViewById<TextView>(R.id.book_title).text = book.title
 
         val tvCover = view.findViewById<TextView>(R.id.book_cover)
+        val ivCover = view.findViewById<ImageView>(R.id.book_cover_img)
         // ✅ [Phase 7] format 为 null 时从文件路径推断
         val isEpub = (rec != null && "epub".equals(rec.format, ignoreCase = true)) ||
                      (rec?.filePath != null && checkNotNull(rec.filePath).lowercase().endsWith(".epub"))
-        if (isEpub) {
-            tvCover.text = "EPUB"
-            tvCover.setBackgroundColor(-0x46ab71.toInt())
+        // 优先显示缓存封面图（ReaderActivity 打开书时写入 cacheDir/covers/<key>.jpg）
+        val coverKey = checkNotNull(book.fileKey).hashCode().toString(16) + ".jpg"
+        val coverPath = JavaFile(ctx.cacheDir, "covers/$coverKey").absolutePath
+        val coverBmp = coverBitmapCache.getOrPut(coverPath) {
+            val f = JavaFile(coverPath)
+            if (f.exists()) {
+                try { BitmapFactory.decodeFile(coverPath) } catch (e: Exception) { null }
+            } else null
+        }
+        if (coverBmp != null) {
+            ivCover.setImageBitmap(coverBmp)
+            ivCover.visibility = View.VISIBLE
+            tvCover.visibility = View.GONE
         } else {
-            tvCover.text = "TXT"
-            tvCover.setBackgroundColor(-0xcccccc.toInt())
+            ivCover.visibility = View.GONE
+            tvCover.visibility = View.VISIBLE
+            if (isEpub) {
+                tvCover.text = "EPUB"
+                tvCover.setBackgroundColor(-0x46ab71.toInt())
+            } else {
+                tvCover.text = "TXT"
+                tvCover.setBackgroundColor(-0xcccccc.toInt())
+            }
         }
 
         val tvInfo = view.findViewById<TextView>(R.id.book_info)

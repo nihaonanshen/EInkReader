@@ -160,8 +160,28 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
 
     // 5. 提取图片字节（遍历章节引用的图片路径，而非 manifest——保证 key 与
     //    [[IMAGE:path]] 标记一致；JPEG 等二进制数据用字节读取，不能 read_to_string）
+    // 上限：单图 1MB，总图 8MB（与 Java fallback 一致）
+    const MAX_IMAGE_BYTES: u64 = 1 * 1024 * 1024;
+    const MAX_TOTAL_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
     let mut images: HashMap<String, String> = HashMap::new();
     let mut all_image_paths: Vec<String> = Vec::new();
+    // 封面图单独入 map（key 固定为 "__cover__"，供书架显示）
+    const COVER_KEY: &str = "__cover__";
+    if let Some(cover_href) = &opf_result.cover_href {
+        // cover 路径相对 OPF 目录
+        let cover_path = if cover_href.starts_with(opf_dir.trim_end_matches('/'))
+            || cover_href.starts_with('/')
+        {
+            cover_href.clone()
+        } else {
+            format!("{}{}", opf_dir, cover_href)
+        };
+        if let Some(bytes) = read_zip_entry_bytes(&mut archive, &cover_path) {
+            if !bytes.is_empty() && (bytes.len() as u64) <= MAX_IMAGE_BYTES {
+                images.insert(COVER_KEY.to_string(), STANDARD.encode(&bytes));
+            }
+        }
+    }
     for ch in &chapters {
         for p in &ch.image_paths {
             if !all_image_paths.contains(p) {
@@ -169,9 +189,6 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
             }
         }
     }
-    // 上限：单图 1MB，总图 8MB（与 Java fallback 一致）
-    const MAX_IMAGE_BYTES: u64 = 1 * 1024 * 1024;
-    const MAX_TOTAL_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
     let mut total_image_bytes: u64 = 0;
     for path in &all_image_paths {
         if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("data:") {
@@ -286,7 +303,7 @@ mod tests {
   </metadata>
   <manifest>
     <item id="c1" href="Text/ch1.xhtml" media-type="application/xhtml+xml"/>
-    <item id="img" href="Images/pic.jpeg" media-type="image/jpeg"/>
+    <item id="img" href="Images/pic.jpeg" media-type="image/jpeg" properties="cover-image"/>
   </manifest>
   <spine><itemref idref="c1"/></spine>
 </package>"#;
@@ -316,8 +333,18 @@ mod tests {
 
         let result = parse_epub(epub_path.to_str().unwrap()).expect("解析 EPUB 应成功");
         // 图片字节被提取（key = ZIP 绝对路径）
-        assert_eq!(result.images.len(), 1, "应提取到 1 张图片");
-        let (key, b64) = result.images.iter().next().unwrap();
+        // 章节引用的图片 + 封面（__cover__）各一条
+        assert_eq!(result.images.len(), 2, "应有章节图 + __cover__ 封面，got {:?}", result.images.keys());
+        // 封面：manifest properties="cover-image" → images["__cover__"]
+        let cover = result.images.get("__cover__").expect("应有 __cover__ 封面");
+        let cover_decoded = base64::engine::general_purpose::STANDARD
+            .decode(cover)
+            .expect("封面 base64 应可解码");
+        assert_eq!(cover_decoded, jpeg, "封面字节应与原图一致");
+        let (key, b64) = result.images
+            .iter()
+            .find(|(k, _)| k.as_str() == "Images/pic.jpeg")
+            .expect("应有 Images/pic.jpeg");
         assert_eq!(key, "Images/pic.jpeg");
         // base64 解码回原字节
         let decoded = base64::engine::general_purpose::STANDARD

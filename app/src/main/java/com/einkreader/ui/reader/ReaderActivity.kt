@@ -43,6 +43,7 @@ import com.einkreader.ui.reader.DebugLog.log
 import com.einkreader.ui.reader.ReaderView.OnPageChangeListener
 import kotlinx.coroutines.*
 import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Locale
 import kotlin.jvm.Volatile
@@ -416,7 +417,8 @@ class ReaderActivity : Activity() {
             titles.add(t)
         }
         tocItems = titles
-        tocCurrentPage = 0
+        // 自动定位到当前章所在页（否则长书目录里 ▶ 标记不可见）
+        tocCurrentPage = if (tocPageSize > 0) currentChapterIndex / tocPageSize else 0
         renderTocPage()
     }
 
@@ -694,7 +696,8 @@ class ReaderActivity : Activity() {
                         chapters = fch
                         fileKey = result.fileKey
                         epubImageBytes = HashMap(result.images)
-
+                        // ★ 提取封面图缓存到磁盘（书架显示用），images["__cover__"] 为 Rust 解析出的封面
+                        cacheCoverToDisk(result.images["__cover__"])
                         // 恢复阅读进度
                         var sc = result.savedChapter
                         var sp = result.savedPage
@@ -1044,8 +1047,8 @@ class ReaderActivity : Activity() {
             // 位置恢复由 layoutPages 内部基于文字指纹自动完成
             checkNotNull(readerView).beginBatchUpdate()
             checkNotNull(readerView).setTextSize(checkNotNull(prefs).getFloat("text_size", 28f))
-            checkNotNull(readerView).setLineSpacing(checkNotNull(prefs).getInt("line_spacing", 15) / 10f)
-            checkNotNull(readerView).setParagraphSpacing(checkNotNull(prefs).getInt("para_spacing", 18) / 10f)
+            checkNotNull(readerView).setLineSpacing(checkNotNull(prefs).getInt("line_spacing", 140) / 100f)
+            checkNotNull(readerView).setParagraphSpacing(checkNotNull(prefs).getInt("para_spacing", 180) / 100f)
             checkNotNull(readerView).setHorizontalMargin(checkNotNull(prefs).getInt("horizontal_margin", 10))
             checkNotNull(readerView).setFirstLineIndent(checkNotNull(prefs).getBoolean("first_line_indent", false))
             val fp: String = checkNotNull(prefs).getString("font_path", "") ?: ""
@@ -1140,6 +1143,21 @@ class ReaderActivity : Activity() {
         )) {
             val v = findViewById<View?>(id)
             if (v is TextView) v.setTextColor(fg)
+        }
+    }
+
+    /** 将封面图字节写入磁盘缓存（书架列表显示用） */
+    private fun cacheCoverToDisk(coverBytes: ByteArray?) {
+        if (coverBytes == null || coverBytes.isEmpty()) return
+        val key = fileKey ?: return
+        try {
+            val dir = File(cacheDir, "covers")
+            if (!dir.exists()) dir.mkdirs()
+            val f = File(dir, key.hashCode().toString(16) + ".jpg")
+            FileOutputStream(f).use { it.write(coverBytes) }
+            log("Cover", "封面已缓存: " + f.absolutePath)
+        } catch (e: Exception) {
+            log("Cover", "封面缓存失败: " + e.message)
         }
     }
 

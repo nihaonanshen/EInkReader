@@ -36,8 +36,8 @@ import kotlin.math.min
 class ReaderView : View {
     // ==================== 排版设置 ====================
     private var textSize = 26f
-    private var lineSpacing = 1.25f
-    private var paragraphSpacing = 1.25f
+    private var lineSpacing = 1.4f
+    private var paragraphSpacing = 1.8f
     private var typeface: Typeface? = Typeface.DEFAULT
     private var bgColor = Color.WHITE
 

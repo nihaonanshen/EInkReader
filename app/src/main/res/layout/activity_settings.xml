@@ -28,7 +28,8 @@
             android:text="A-" android:textColor="@android:color/black"
             android:textSize="18sp" android:textStyle="bold"
             android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true" />
+            android:clickable="true"
+            android:foreground="?android:attr/selectableItemBackground" />
         <TextView android:id="@+id/label_text_size"
             android:layout_width="0dp" android:layout_height="wrap_content"
             android:layout_weight="1" android:gravity="center"
@@ -40,7 +41,8 @@
             android:text="A+" android:textColor="@android:color/black"
             android:textSize="18sp" android:textStyle="bold"
             android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true" />
+            android:clickable="true"
+            android:foreground="?android:attr/selectableItemBackground" />
     </LinearLayout>
 
     <!-- 行距 -->
@@ -56,11 +58,12 @@
             android:text="−" android:textColor="@android:color/black"
             android:textSize="18sp" android:textStyle="bold"
             android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true" />
+            android:clickable="true"
+            android:foreground="?android:attr/selectableItemBackground" />
         <TextView android:id="@+id/label_line_spacing"
             android:layout_width="0dp" android:layout_height="wrap_content"
             android:layout_weight="1" android:gravity="center"
-            android:text="1.30" android:textColor="@android:color/black"
+            android:text="1.40" android:textColor="@android:color/black"
             android:textSize="16sp" android:textStyle="bold"
             android:paddingLeft="10dp" android:paddingRight="10dp" />
         <TextView
@@ -69,7 +72,8 @@
             android:text="+" android:textColor="@android:color/black"
             android:textSize="18sp" android:textStyle="bold"
             android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true" />
+            android:clickable="true"
+            android:foreground="?android:attr/selectableItemBackground" />
     </LinearLayout>
 
     <!-- 段距 -->
@@ -85,11 +89,12 @@
             android:text="−" android:textColor="@android:color/black"
             android:textSize="18sp" android:textStyle="bold"
             android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true" />
+            android:clickable="true"
+            android:foreground="?android:attr/selectableItemBackground" />
         <TextView android:id="@+id/label_para_spacing"
             android:layout_width="0dp" android:layout_height="wrap_content"
             android:layout_weight="1" android:gravity="center"
-            android:text="1.30" android:textColor="@android:color/black"
+            android:text="1.80" android:textColor="@android:color/black"
             android:textSize="16sp" android:textStyle="bold"
             android:paddingLeft="10dp" android:paddingRight="10dp" />
         <TextView
@@ -98,7 +103,8 @@
             android:text="+" android:textColor="@android:color/black"
             android:textSize="18sp" android:textStyle="bold"
             android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true" />
+            android:clickable="true"
+            android:foreground="?android:attr/selectableItemBackground" />
     </LinearLayout>
 
     <!-- 左右边距 -->
@@ -114,7 +120,8 @@
             android:text="−" android:textColor="@android:color/black"
             android:textSize="18sp" android:textStyle="bold"
             android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true" />
+            android:clickable="true"
+            android:foreground="?android:attr/selectableItemBackground" />
         <TextView android:id="@+id/label_horizontal_margin"
             android:layout_width="0dp" android:layout_height="wrap_content"
             android:layout_weight="1" android:gravity="center"
@@ -127,7 +134,8 @@
             android:text="+" android:textColor="@android:color/black"
             android:textSize="18sp" android:textStyle="bold"
             android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true" />
+            android:clickable="true"
+            android:foreground="?android:attr/selectableItemBackground" />
     </LinearLayout>
 
         <!-- 首行缩进开关 -->
@@ -143,13 +151,12 @@
                 android:checked="false" />
         </LinearLayout>
 
-        <!-- 字体选择 -->
+        <!-- 字体选择（固定高度：ScrollView 内不可用 weight，且字体可能很多） -->
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
         android:text="字体" android:textColor="@android:color/black"
         android:textSize="18sp" android:layout_marginBottom="8dp" />
     <ListView android:id="@+id/font_list"
-        android:layout_width="match_parent" android:layout_height="0dp"
-        android:layout_weight="1"
+        android:layout_width="match_parent" android:layout_height="240dp"
         android:divider="@android:color/black"
         android:dividerHeight="1dp" />
 

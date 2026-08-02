@@ -15,6 +15,8 @@ pub(super) struct OpfResult {
     pub(super) encoding: String,
     pub(super) ncx_href: Option<String>,
     pub(super) nav_xhtml_href: Option<String>,
+    /// 封面图 href（manifest properties="cover-image" 或文件名含 cover）
+    pub(super) cover_href: Option<String>,
 }
 
 /// 解析 OPF 文件，返回 (元数据, manifest, spine 中的章节 href 列表)
@@ -82,7 +84,7 @@ pub(super) fn parse_opf(
                         }
                         if let (Some(id), Some(href)) = (id, href) {
                             manifest.insert(id, href.clone());
-                            if let Some(mt) = media_type {
+                            if let Some(mt) = &media_type {
                                 if mt.contains("dtbncx") || mt.contains("ncx") {
                                     if result.ncx_href.is_none() {
                                         result.ncx_href = Some(href.clone());
@@ -93,6 +95,23 @@ pub(super) fn parse_opf(
                                 if pr.eq_ignore_ascii_case("nav") {
                                     if result.nav_xhtml_href.is_none() {
                                         result.nav_xhtml_href = Some(href.clone());
+                                    }
+                                }
+                                // ✅ 封面：manifest properties="cover-image"
+                                if pr.to_lowercase().contains("cover") {
+                                    if result.cover_href.is_none() {
+                                        result.cover_href = Some(href.clone());
+                                    }
+                                }
+                            }
+                            // ✅ 兜底：media-type 为图片且文件名含 cover/封面（如 cover.jpeg）
+                            if result.cover_href.is_none() {
+                                if let Some(mt) = &media_type {
+                                    let href_lower = href.to_lowercase();
+                                    if mt.starts_with("image/")
+                                        && (href_lower.contains("cover") || href_lower.contains("封面"))
+                                    {
+                                        result.cover_href = Some(href.clone());
                                     }
                                 }
                             }

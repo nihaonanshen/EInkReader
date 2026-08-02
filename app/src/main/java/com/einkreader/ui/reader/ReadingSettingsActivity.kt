@@ -44,6 +44,12 @@ class ReadingSettingsActivity : Activity() {
         setContentView(R.layout.activity_settings)
         prefs = getSharedPreferences("eink_reader_prefs", MODE_PRIVATE)
 
+        // 夜间模式：设置页背景与文字（与阅读页一致的黑底灰字）
+        if (prefs.getBoolean("night_mode", false)) {
+            findViewById<android.view.View>(android.R.id.content).setBackgroundColor(-0xddddde)
+            applyNightTextColor(findViewById<android.view.View>(android.R.id.content), -0x444445)
+        }
+
         // Initialize UI elements
         labelTextSize = findViewById(R.id.label_text_size)
         labelLineSpacing = findViewById(R.id.label_line_spacing)
@@ -70,8 +76,8 @@ class ReadingSettingsActivity : Activity() {
 
         // --- Load saved settings ---
         val savedTextSize = prefs.getFloat("text_size", 28f).toInt()
-        val savedLS = prefs.getInt("line_spacing", 130)   // 1.30 default (×100 for 0.01 precision)
-        val savedPS = prefs.getInt("para_spacing", 130)   // 1.30 default
+        val savedLS = prefs.getInt("line_spacing", 140)   // 1.40 default (×100 for 0.01 precision)
+        val savedPS = prefs.getInt("para_spacing", 180)   // 1.80 default
         val savedHM = prefs.getInt("horizontal_margin", 10)
 
         labelTextSize.text = savedTextSize.toString()
@@ -95,35 +101,35 @@ class ReadingSettingsActivity : Activity() {
             setResult(RESULT_OK)
         }
 
-        // --- Line spacing buttons (step = 0.01, range 0.1-3.0 → 10-300) ---
+        // --- Line spacing buttons (step = 0.01, range 1.0-2.5 → 100-250) ---
         fun updateLineSpacing(value: Int) {
-            val clamped = value.coerceIn(10, 300)
+            val clamped = value.coerceIn(100, 250)
             labelLineSpacing.text = String.format("%.2f", clamped / 100f)
             prefs.edit().putInt("line_spacing", clamped).apply()
             setResult(RESULT_OK)
         }
         btnLineMinus.setOnClickListener {
-            val current = prefs.getInt("line_spacing", 130)
+            val current = prefs.getInt("line_spacing", 140)
             updateLineSpacing(current - 1)
         }
         btnLinePlus.setOnClickListener {
-            val current = prefs.getInt("line_spacing", 130)
+            val current = prefs.getInt("line_spacing", 140)
             updateLineSpacing(current + 1)
         }
 
-        // --- Paragraph spacing buttons (step = 0.01, range 0.1-3.0) ---
+        // --- Paragraph spacing buttons (step = 0.01, range 1.0-3.0 → 100-300) ---
         fun updateParaSpacing(value: Int) {
-            val clamped = value.coerceIn(10, 300)
+            val clamped = value.coerceIn(100, 300)
             labelParaSpacing.text = String.format("%.2f", clamped / 100f)
             prefs.edit().putInt("para_spacing", clamped).apply()
             setResult(RESULT_OK)
         }
         btnParaMinus.setOnClickListener {
-            val current = prefs.getInt("para_spacing", 130)
+            val current = prefs.getInt("para_spacing", 180)
             updateParaSpacing(current - 1)
         }
         btnParaPlus.setOnClickListener {
-            val current = prefs.getInt("para_spacing", 130)
+            val current = prefs.getInt("para_spacing", 180)
             updateParaSpacing(current + 1)
         }
 
@@ -158,6 +164,18 @@ class ReadingSettingsActivity : Activity() {
             setResult(RESULT_OK)
             Toast.makeText(this@ReadingSettingsActivity,
                 "Selected: ${font.displayName}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** 递归遍历视图树，将所有 TextView 设为指定颜色（夜间模式用；Switch 继承 TextView，需排除） */
+    private fun applyNightTextColor(view: android.view.View, color: Int) {
+        if (view is TextView && view !is Switch) {
+            view.setTextColor(color)
+        }
+        if (view is android.view.ViewGroup) {
+            for (i in 0 until view.childCount) {
+                applyNightTextColor(view.getChildAt(i), color)
+            }
         }
     }
 
