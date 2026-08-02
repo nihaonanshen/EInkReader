@@ -63,7 +63,7 @@
         <TextView android:id="@+id/label_line_spacing"
             android:layout_width="0dp" android:layout_height="wrap_content"
             android:layout_weight="1" android:gravity="center"
-            android:text="1.40" android:textColor="@android:color/black"
+            android:text="1.4" android:textColor="@android:color/black"
             android:textSize="16sp" android:textStyle="bold"
             android:paddingLeft="10dp" android:paddingRight="10dp" />
         <TextView
@@ -94,7 +94,7 @@
         <TextView android:id="@+id/label_para_spacing"
             android:layout_width="0dp" android:layout_height="wrap_content"
             android:layout_weight="1" android:gravity="center"
-            android:text="1.80" android:textColor="@android:color/black"
+            android:text="1.6" android:textColor="@android:color/black"
             android:textSize="16sp" android:textStyle="bold"
             android:paddingLeft="10dp" android:paddingRight="10dp" />
         <TextView

@@ -37,7 +37,7 @@ class ReaderView : View {
     // ==================== 排版设置 ====================
     private var textSize = 26f
     private var lineSpacing = 1.4f
-    private var paragraphSpacing = 1.8f
+    private var paragraphSpacing = 1.6f
     private var typeface: Typeface? = Typeface.DEFAULT
     private var bgColor = Color.WHITE
 
@@ -509,7 +509,8 @@ class ReaderView : View {
         bp.setTextSize(ts * dens)
         val bpFm = bp.getFontMetrics()
         val lineHeight = ceil((bpFm.descent - bpFm.ascent).toDouble()).toFloat() * ls
-        val paraSpacingPx = ts * dens * (ps - ls)
+        // 段距为增量：段距 < 行距时取 0（防止负间距文字重叠）
+        val paraSpacingPx = ts * dens * max(0f, ps - ls)
 
         val paragraphs = content.split("\\n".toRegex()).toTypedArray()
         val paraTypes: MutableList<Int?> = chapter.paragraphTypes.toMutableList()

@@ -1047,8 +1047,8 @@ class ReaderActivity : Activity() {
             // 位置恢复由 layoutPages 内部基于文字指纹自动完成
             checkNotNull(readerView).beginBatchUpdate()
             checkNotNull(readerView).setTextSize(checkNotNull(prefs).getFloat("text_size", 28f))
-            checkNotNull(readerView).setLineSpacing(checkNotNull(prefs).getInt("line_spacing", 140) / 100f)
-            checkNotNull(readerView).setParagraphSpacing(checkNotNull(prefs).getInt("para_spacing", 180) / 100f)
+            checkNotNull(readerView).setLineSpacing(checkNotNull(prefs).getInt("line_spacing", 14) / 10f)
+            checkNotNull(readerView).setParagraphSpacing(checkNotNull(prefs).getInt("para_spacing", 16) / 10f)
             checkNotNull(readerView).setHorizontalMargin(checkNotNull(prefs).getInt("horizontal_margin", 10))
             checkNotNull(readerView).setFirstLineIndent(checkNotNull(prefs).getBoolean("first_line_indent", false))
             val fp: String = checkNotNull(prefs).getString("font_path", "") ?: ""

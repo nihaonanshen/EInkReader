@@ -59,6 +59,12 @@ if [ -n "$ANDROID_NDK_HOME" ]; then
     # 配置链接器
     export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLCHAIN_DIR/bin/aarch64-linux-android21-clang"
     export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$TOOLCHAIN_DIR/bin/armv7a-linux-androideabi21-clang"
+
+    # cc-rs 编译依赖（jni-sys 等）所需的编译器/归档器
+    export CC_aarch64_linux_android="$TOOLCHAIN_DIR/bin/aarch64-linux-android21-clang"
+    export AR_aarch64_linux_android="$TOOLCHAIN_DIR/bin/llvm-ar"
+    export CC_armv7_linux_androideabi="$TOOLCHAIN_DIR/bin/armv7a-linux-androideabi21-clang"
+    export AR_armv7_linux_androideabi="$TOOLCHAIN_DIR/bin/llvm-ar"
 fi
 
 cd "$CRATE_DIR"

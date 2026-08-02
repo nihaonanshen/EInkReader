@@ -162,14 +162,13 @@ pub(super) fn parse_xhtml(html: &str, base_dir: &str) -> XhtmlContent {
             if c < '\u{80}' {
                 text.push(c);
             } else {
-                // 多字节 UTF-8 字符：必须按完整字符解码，不能逐字节 as char（否则中文变双重编码乱码）
-                if let Ok(s) = std::str::from_utf8(&bytes[i..]) {
-                    if let Some(ch) = s.chars().next() {
-                        if ch != '\u{feff}' { // 跳过 UTF-8 BOM
-                            text.push(ch);
-                        }
-                        i += ch.len_utf8() - 1; // 循环末尾还会 +1，合计推进 ch.len_utf8()
+                // 多字节 UTF-8 字符：手动解码当前字符（O(1)）。
+                // ⚠️ 不能用 from_utf8(&bytes[i..])——它会校验整个剩余字符串，中文文本 O(n²) 爆炸
+                if let Some(ch) = decode_utf8_at(bytes, i) {
+                    if ch != '\u{feff}' { // 跳过 UTF-8 BOM
+                        text.push(ch);
                     }
+                    i += ch.len_utf8() - 1; // 循环末尾还会 +1，合计推进 ch.len_utf8()
                 }
             }
         }
@@ -221,6 +220,36 @@ fn resolve_img_path(base_dir: &str, src: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+/// 从字节流 pos 位置解码一个 UTF-8 字符（O(1)，只处理当前字符）
+/// 返回 None 表示非法 UTF-8 序列
+fn decode_utf8_at(bytes: &[u8], pos: usize) -> Option<char> {
+    let b0 = *bytes.get(pos)?;
+    if b0 < 0x80 {
+        return Some(b0 as char);
+    }
+    let (len, cp) = if b0 >= 0xF0 {
+        (4, (b0 & 0x07) as u32)
+    } else if b0 >= 0xE0 {
+        (3, (b0 & 0x0F) as u32)
+    } else if b0 >= 0xC0 {
+        (2, (b0 & 0x1F) as u32)
+    } else {
+        return None; // 非法首字节
+    };
+    if pos + len > bytes.len() {
+        return None;
+    }
+    let mut cp = cp;
+    for k in 1..len {
+        let b = bytes[pos + k];
+        if b & 0xC0 != 0x80 {
+            return None; // 非法续字节
+        }
+        cp = (cp << 6) | (b & 0x3F) as u32;
+    }
+    char::from_u32(cp)
 }
 
 /// 从 img 标签中提取 src 属性

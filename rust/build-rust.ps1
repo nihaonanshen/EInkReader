@@ -41,6 +41,18 @@ if (Test-Path $ndkBase) {
 if (-not $env:ANDROID_NDK_HOME) {
     Write-Warning "ANDROID_NDK_HOME not set. Cross-compilation may fail."
     Write-Warning "Set it via: `$env:ANDROID_NDK_HOME = `"path\to\ndk`""
+} else {
+    # 配置 Windows 交叉编译工具链（NDK 27 无 clang.exe，需 .cmd 包装器；ar 用 llvm-ar）
+    $NdkBin = Join-Path $env:ANDROID_NDK_HOME "toolchains\llvm\prebuilt\windows-x86_64\bin"
+    if (Test-Path (Join-Path $NdkBin "aarch64-linux-android21-clang.cmd")) {
+        Write-Host "NDK toolchain: $NdkBin"
+        $env:CC_aarch64_linux_android = Join-Path $NdkBin "aarch64-linux-android21-clang.cmd"
+        $env:AR_aarch64_linux_android = Join-Path $NdkBin "llvm-ar.exe"
+        $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = Join-Path $NdkBin "aarch64-linux-android21-clang.cmd"
+        $env:CC_armv7_linux_androideabi = Join-Path $NdkBin "armv7a-linux-androideabi21-clang.cmd"
+        $env:AR_armv7_linux_androideabi = Join-Path $NdkBin "llvm-ar.exe"
+        $env:CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER = Join-Path $NdkBin "armv7a-linux-androideabi21-clang.cmd"
+    }
 }
 
 Set-Location $CrateDir
