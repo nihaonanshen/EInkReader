@@ -12,8 +12,8 @@ android {
         applicationId "com.einkreader"
         minSdk 19
         targetSdk 35
-        versionCode 7
-        versionName "0.0.6"
+        versionCode 8
+        versionName "0.0.7"
         
         // ✅ [Phase 6] Android 4.4 核心库反编译要求启用 Multidex
         multiDexEnabled true
@@ -26,22 +26,20 @@ android {
 
     signingConfigs {
         release {
-            // ⚠️ SECURITY: 签名密码应从环境变量或 local.properties 读取
-            // 在生产环境中，请使用以下配置之一：
-            // 方式1: 环境变量 (推荐)
-            // storePassword providers.environmentVariable("SIGNING_STORE_PASSWORD").orElse("")
-            // keyPassword providers.environmentVariable("SIGNING_KEY_PASSWORD").orElse("")
-            // 方式2: local.properties (本地开发)
-            // def props = new Properties(); 
-            // props.load(new FileInputStream(rootProject.file("local.properties")))
-            // storePassword props['SIGNING_STORE_PASSWORD']
-            // keyPassword props['SIGNING_KEY_PASSWORD']
-            
-            // ⚠️ 当前为占位符值，实际构建前必须替换！
-            storeFile file(System.getenv("SIGNING_STORE_FILE") ?: "einkreader.jks")
-            storePassword System.getenv("SIGNING_STORE_PASSWORD") ?: ""
+            // 签名配置：优先读 local.properties（本地构建），其次环境变量（CI）
+            def props = new Properties()
+            def propFile = rootProject.file("local.properties")
+            if (propFile.exists()) {
+                propFile.withInputStream { props.load(it) }
+            }
+            def storeFileVal = props['SIGNING_STORE_FILE'] ?: System.getenv("SIGNING_STORE_FILE") ?: "einkreader.jks"
+            def storePassVal = props['SIGNING_STORE_PASSWORD'] ?: System.getenv("SIGNING_STORE_PASSWORD") ?: ""
+            def keyPassVal = props['SIGNING_KEY_PASSWORD'] ?: System.getenv("SIGNING_KEY_PASSWORD") ?: ""
+            // keystore 位于项目根目录（storeFile 相对路径基于模块目录，需显式用根目录）
+            storeFile rootProject.file(storeFileVal)
+            storePassword storePassVal
             keyAlias "einkreader"
-            keyPassword System.getenv("SIGNING_KEY_PASSWORD") ?: ""
+            keyPassword keyPassVal
         }
     }
 
