@@ -12,8 +12,8 @@
 |------|------|
 | 📖 格式支持 | TXT / EPUB |
 | 🔤 编码检测 | 自动识别 GBK / UTF-8 / Big5 / GB18030 |
-| 📑 智能目录 | 中文章节（第X章/回/卷）+ 英文 Chapter + 特殊章节提取 |
-| 🖼️ 图片显示 | EPUB 内嵌图片渲染 |
+| 📑 智能目录 | 中文章节（第X章/回/卷）+ 英文 Chapter + 特殊章节提取；NCX / EPUB3 nav / 内嵌 HTML 目录页（EasyPub `<div class="toc">`）三路识别，支持多级目录树（卷/部→章节） |
+| 🖼️ 图片显示 | EPUB 内嵌图片渲染（含微信读书源 `data-src` 兼容）；单图 1MB / 总图 64MB 配额保护 |
 | 🔠 字体设置 | 字号 / 行距 / 段距 / 边距，支持阅读页内即时调整 |
 | 🆒 自定义字体 | TTF/OTF 字体文件支持 |
 | 🌙 夜间模式 | 黑底灰字，适合暗光阅读 |
@@ -122,7 +122,7 @@ rust/einkreader-core/src/
         ├── mod.rs         # 入口（parse_epub / load_chapter_content）
         ├── container.rs   # container.xml 解析
         ├── opf.rs         # OPF 元数据 / manifest / spine
-        ├── toc.rs         # NCX + EPUB3 nav 目录解析
+        ├── toc.rs         # NCX + EPUB3 nav + HTML 目录页（多级树）解析
         ├── title.rs       # 章节标题提取
         ├── xhtml.rs       # 正文内容解析与 HTML 清理
         └── zip_utils.rs   # ZIP 条目安全读取
@@ -131,6 +131,31 @@ rust/einkreader-core/src/
 ---
 
 # 最近更新
+
+**2026-08-09**：EPUB 目录识别与图片显示增强 + TXT 解析优化
+
+### EPUB 目录识别
+- 新增内嵌 HTML 目录页识别：无 NCX 时自动扫描 EasyPub 等生成器产出的 `<div class="toc">` 目录页（`parse_html_toc`），支持 `toc` / `index` / `contents` / `目录` 命名及**内容特征兜底扫描**（文件名不含关键词也能识别）
+- 修复 EasyPub 机器占位标题误判：`chapter 1 - 0` 等格式现在正确判定为占位符，章节标题回退到 `<h2 class="titlel2std">` 真实标题
+- 多级目录树：NCX navpoint / EPUB3 nav `ol>li` / HTML 目录页嵌套深度均构建真正的层级结构（卷/部 → 章节），Android 端 `NativeBridge` 递归解析 children
+- 目录页剔除出正文章节：`toc.html` / `nav.xhtml` 不再作为阅读章节出现
+- 长书性能优化：标题匹配改为 O(1) 索引（`NcxTitles` 维护文件名/路径索引），消除数千章书籍的 O(n²) 遍历
+
+### EPUB 图片显示
+- 图片总配额 8MB → 64MB（修复《全球通史》41MB 图册后半本插图全部丢失的问题）
+- 修复微信读书源图片提取：`<img data-src="https://..." src="本地图"/>` 现在优先取本地 `src`，此前误取 `data-src` 外链导致整书插图空白
+- 修复 SVG `<image xlink:href>` 解析偏移错误
+
+### TXT 解析
+- 修复无标题书籍按字数分割时误用字节数（中文 3 字节/字导致早切），改为按字符数统计
+- 编码回退后返回实际使用的编码，不再错误报告检测初值
+
+### 其他
+- 书签列表/跳转按 key 稳定排序（修复 SharedPreferences HashMap 顺序不稳定导致的跳转错位）
+- 修复 `copyToTempFile` 输入流泄漏与临时文件名并发冲突
+- 测试：Rust 67 个单元测试全部通过
+
+---
 
 **2026-08-01**：Phase 8 — 仓库整理与序列化收敛
 
