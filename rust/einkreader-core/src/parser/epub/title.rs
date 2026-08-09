@@ -20,9 +20,13 @@ static REGEX_H3: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<h3(?:[^>]*)?>(.*?
 static REGEX_TITLE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<title(?:[^>]*)?>(.*?)</title\s*>").unwrap());
 static REGEX_STRIP_TAGS: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]*>").unwrap());
 
-/// 机器生成的占位标题：空、"chapter"、"Chapter 1"、"chapter_2" 等
+/// 机器生成的占位标题：空、"chapter"、"Chapter 1"、"chapter_2"、
+/// "章节正文"（部分 EPUB 生成器对每个 XHTML 的固定占位标题）等
 pub(super) fn is_placeholder_title(t: &str) -> bool {
-    t.is_empty() || t.eq_ignore_ascii_case("chapter") || REGEX_FAKE_CHAPTER.is_match(t)
+    t.is_empty()
+        || t.eq_ignore_ascii_case("chapter")
+        || REGEX_FAKE_CHAPTER.is_match(t)
+        || matches!(t.trim(), "章节正文" | "章节正文内容" | "正文" | "ChapterText")
 }
 
 /// 从原始 HTML 提取真实标题：优先 <title>，其次 <h1>/<h2>/<h3>
@@ -124,6 +128,10 @@ mod tests {
         assert!(!is_placeholder_title("Chapter 1: 真正的标题"));
         assert!(!is_placeholder_title("chapter 1 初入江湖"));
         assert!(!is_placeholder_title("序言"));
+        // 中文机器占位标题
+        assert!(is_placeholder_title("章节正文"));
+        assert!(is_placeholder_title(" 章节正文 "));
+        assert!(!is_placeholder_title("章节正文：初入江湖"));
     }
 
     #[test]
