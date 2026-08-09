@@ -76,12 +76,18 @@ pub(super) fn parse_xhtml(html: &str, base_dir: &str) -> XhtmlContent {
                 continue;
             }
             i += 1;
+            // 先判断是否闭标签（</ 前缀），再解析标签名。
+            // ⚠️ 原实现把 '/' 当作标签名解析的停止字符，导致 </h2> 的标签名解析为空串、
+            // is_closing 恒为 false——闭标签分支（含 h1-h3 段落类型标记）从未生效。
+            let is_closing = i < len && bytes[i] as char == '/';
+            if is_closing {
+                i += 1;
+            }
             let tag_start = i;
-            while i < len && bytes[i] as char != '>' && bytes[i] as char != ' ' && bytes[i] as char != '\t' && bytes[i] as char != '\n' && bytes[i] as char != '/' { i += 1; }
+            while i < len && bytes[i] as char != '>' && bytes[i] as char != ' ' && bytes[i] as char != '\t' && bytes[i] as char != '\n' { i += 1; }
             let tag_name = std::str::from_utf8(&bytes[tag_start..i]).unwrap_or_default();
             let tag_lower = tag_name.to_lowercase();
-            let is_closing = tag_lower.starts_with('/');
-            let bare_tag: &str = if is_closing { &tag_lower[1..] } else { &tag_lower };
+            let bare_tag: &str = &tag_lower;
 
             if !is_closing {
                 match bare_tag {
@@ -134,7 +140,22 @@ pub(super) fn parse_xhtml(html: &str, base_dir: &str) -> XhtmlContent {
                 continue;
             }
 
-            if BLOCK_TAGS.contains(&bare_tag) || bare_tag == "br" { text.push('\n'); }
+            if BLOCK_TAGS.contains(&bare_tag) || bare_tag == "br" {
+                // 块级标签：段落边界。
+                // 只在闭标签处 push 一个 \n 作为段落分隔（开标签不 push，避免段落间空行），
+                // 并在此处同步记录段落类型——保证 paragraph_types 与 split("\n") 的段落一一对应。
+                if is_closing {
+                    if para_has_content {
+                        paragraph_types.push(pending_type);
+                    } else if !text.is_empty() {
+                        // 空段落（如 <p></p>）也占一个类型槽，保持与 \n 对齐
+                        paragraph_types.push(PARA_NORMAL);
+                    }
+                    pending_type = PARA_NORMAL;
+                    para_has_content = false;
+                    text.push('\n');
+                }
+            }
 
             while i < len && bytes[i] as char != '>' { i += 1; }
             if i < len { i += 1; }
@@ -153,10 +174,14 @@ pub(super) fn parse_xhtml(html: &str, base_dir: &str) -> XhtmlContent {
             text.push(c); para_has_content = true; i += 1; continue;
         }
 
-        if c == '\n' && para_has_content {
-            paragraph_types.push(pending_type);
-            pending_type = PARA_NORMAL;
+        if c == '\n' {
+            // 源 HTML 中的换行（标签间空白缩进）：不写入 text——
+            // 段落边界统一由块级标签闭合处产生（一个 \n），
+            // 避免产生空段落（空段在 ReaderView 里会多加整行高，造成段距异常）。
+            // 仅标记段落内容结束。注意：<pre> 内换行暂不保留（当前解析器不区分）。
             para_has_content = false;
+            i += 1;
+            continue;
         }
         if c != '\r' {
             if c < '\u{80}' {
@@ -548,6 +573,21 @@ fn decode_entity(entity: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_parse_xhtml_paragraph_newlines() {
+        // 诊断：块级标签开+闭各 push \n，确认 text 中段落间空行数量
+        let html = "<html><body><h2>第1章 标题</h2><p>正文一</p><p>正文二</p></body></html>";
+        let parsed = parse_xhtml(html, "");
+        println!("TEXT={:?}", parsed.text);
+        println!("TYPES={:?}", parsed.paragraph_types);
+        // 段落数 = types 数
+        assert_eq!(parsed.paragraph_types.len(), 3, "应有 3 个段落类型");
+        // text 中的 \n 数应与段落数匹配（每段末尾 1 个），而不是 2 倍
+        let nl_count = parsed.text.matches('\n').count();
+        println!("\\n 数 = {}（段落数 3）", nl_count);
+        assert!(nl_count <= 3, "段落间不应有空行，\\n 数 {} > 段落数", nl_count);
+    }
 
     #[test]
     fn test_parse_xhtml_chinese_not_mojibake() {
