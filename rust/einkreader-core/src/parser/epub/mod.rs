@@ -115,9 +115,21 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
         }
 
         // ✅ 目录页剔除：目录来源文件（toc.html / nav.xhtml 等）不再作为正文章节，
-        //    避免阅读时第一章就是"Table Of Contents"
+        //    避免阅读时第一章就是"Table Of Contents"。
+        //    两种判定：
+        //    1) 精确匹配 parse_ncx 记录的实际目录来源文件（toc_sources）
+        //    2) spine 条目文件名含 toc/nav/目录 的 HTML——即使 NCX 命中（此时
+        //       toc_sources 可能为空，只有 NCX 命中时 book-toc.html 不会被扫描记录），
+        //       这类文件几乎必是目录页，也应从正文章节剔除
         let href_normalized = normalize_path(href);
-        if toc_sources.iter().any(|s| s == &href_normalized) {
+        let filename_lower = href_normalized
+            .rsplit_once('/')
+            .map(|(_, f)| f)
+            .unwrap_or(&href_normalized)
+            .to_lowercase();
+        let is_toc_named = (filename_lower.ends_with(".html") || filename_lower.ends_with(".xhtml"))
+            && (filename_lower.contains("toc") || filename_lower.contains("nav") || filename_lower.contains("目录"));
+        if toc_sources.iter().any(|s| s == &href_normalized) || is_toc_named {
             eprintln!("跳过目录页（不作为正文章节）: {}", href);
             continue;
         }
