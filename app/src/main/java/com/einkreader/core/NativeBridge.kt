@@ -4,6 +4,7 @@ import android.util.Base64
 import android.util.Log
 import com.einkreader.core.model.Chapter
 import com.einkreader.core.model.EpubResult
+import com.einkreader.core.model.TocItem
 import com.einkreader.core.parser.EpubParserFallback
 import com.einkreader.core.parser.TxtParser
 import java.io.File
@@ -350,6 +351,19 @@ class NativeBridge {
         return readBincodeString(bb)
     }
 
+    /** 递归读取单个 TocItem（bincode：title/href + children 数量 + 递归 children） */
+    private fun readTocItem(bb: ByteBuffer): TocItem {
+        val item = TocItem()
+        item.title = readBincodeString(bb)
+        item.href = readBincodeString(bb)
+        val childrenCount = bb.long.toInt()
+        item.children = ArrayList(childrenCount)
+        for (j in 0 until childrenCount) {
+            item.children.add(readTocItem(bb))
+        }
+        return item
+    }
+
     /** 读取 bincode 中的 boolean (u8: 0=false, else=true) */
     private fun readBincodeBoolean(bb: ByteBuffer): Boolean {
         return bb.get().toInt() != 0
@@ -428,6 +442,12 @@ class NativeBridge {
                 val key = readBincodeString(bb)
                 val value = readBincodeString(bb)
                 result.images[key] = Base64.decode(value, Base64.DEFAULT)
+            }
+            // 解析目录树：Vec<TocItem>（递归支持多级嵌套）
+            val tocItemCount = bb.long.toInt()
+            result.tocItems = ArrayList(tocItemCount)
+            for (i in 0 until tocItemCount) {
+                result.tocItems.add(readTocItem(bb))
             }
             if (result.title.isEmpty() && file != null) {
                 val name = file.name

@@ -196,6 +196,46 @@ class NativeBridgeBincodeTest {
         assertEquals(2, result.chapters.size)
         assertEquals("ch01.xhtml", result.chapters[0].xhtmlPath)
         assertTrue(result.chapters[1].content.isEmpty())
+        // 目录树字段应该为空（测试数据中没有）
+        assertTrue(result.tocItems.isEmpty())
+    }
+
+    @Test
+    fun testParseEpubBinaryMultilevelToc() {
+        // 验证目录树递归解析（多级 children）
+        val bridge = NativeBridge()
+        val bb = java.nio.ByteBuffer.allocate(2048).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+        fun ws(s: String) {
+            val bytes = s.toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+            bb.putLong(bytes.size.toLong())
+            bb.put(bytes)
+        }
+        ws("测试书籍")
+        ws("作者")
+        ws("UTF-8")
+        bb.putLong(0) // 无章节
+        bb.putLong(0) // 无图片
+        // tocItems: Vec<TocItem> 长度为 1（第一卷，含 2 个子章节）
+        bb.putLong(1)
+        ws("第一卷")
+        ws("vol1.xhtml")
+        bb.putLong(2)
+        ws("第一章 开始")
+        ws("ch01.xhtml")
+        bb.putLong(0)
+        ws("第二章 继续")
+        ws("ch02.xhtml")
+        bb.putLong(0)
+        val len = bb.position()
+        val data = java.util.Arrays.copyOf(bb.array(), len)
+        val result = bridge.parseEpubBinary(data, java.io.File("/tmp/t.epub"))
+        assertEquals(1, result.tocItems.size)
+        assertEquals("第一卷", result.tocItems[0].title)
+        assertEquals("vol1.xhtml", result.tocItems[0].href)
+        assertEquals(2, result.tocItems[0].children.size)
+        assertEquals("第一章 开始", result.tocItems[0].children[0].title)
+        assertEquals("第二章 继续", result.tocItems[0].children[1].title)
+        assertEquals(0, result.tocItems[0].children[0].children.size)
     }
 
     @Test

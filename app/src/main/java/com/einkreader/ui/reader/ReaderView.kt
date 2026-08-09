@@ -37,7 +37,7 @@ class ReaderView : View {
     // ==================== 排版设置 ====================
     private var textSize = 26f
     private var lineSpacing = 1.4f
-    private var paragraphSpacing = 1.6f
+    private var paragraphSpacing = 1.0f
     private var typeface: Typeface? = Typeface.DEFAULT
     private var bgColor = Color.WHITE
 
@@ -501,6 +501,8 @@ class ReaderView : View {
 
         // ===== 以上 Rust 分支失败时，自动 fall through 到 Java 实现 =====
 
+        log("Image", "Java fallback layout: chapter=${chapter != null}, images=${images != null}, images.size=${images?.size}, content.length=${content.length}")
+
         // 后台线程 Paint
         val bp = Paint(Paint.ANTI_ALIAS_FLAG)
         bp.setColor(fgColor)
@@ -509,8 +511,8 @@ class ReaderView : View {
         bp.setTextSize(ts * dens)
         val bpFm = bp.getFontMetrics()
         val lineHeight = ceil((bpFm.descent - bpFm.ascent).toDouble()).toFloat() * ls
-        // 段距为增量：段距 < 行距时取 0（防止负间距文字重叠）
-        val paraSpacingPx = ts * dens * max(0f, ps - ls)
+        // 段距为绝对增量：段距 × 字体大小（独立于行距）
+        val paraSpacingPx = ts * dens * ps
 
         val paragraphs = content.split("\\n".toRegex()).toTypedArray()
         val paraTypes: MutableList<Int?> = chapter.paragraphTypes.toMutableList()
@@ -566,15 +568,21 @@ class ReaderView : View {
             // 图片标记
             if (trimmed.startsWith("[[IMAGE:") && trimmed.endsWith("]]")) {
                 val imgPath = trimmed.substring(8, trimmed.length - 2).trim { it <= ' ' }
+                log("Image", "找到图片标记: $imgPath, images.size=${images?.size}, chapterImages=${chapterImages != null}")
+                // 打印 content 中的图片标记
+                val imageMarkers = content.lines().filter { it.startsWith("[[IMAGE:") }.map { it.substringBefore("]]") + "]]" }.toSet()
+                log("Image", "content 中的图片标记: $imageMarkers")
                 var imgW = contentWidth
                 var imgH = contentHeight / 2
                 // 检查图片原始宽高比（从字节数据解码后缩放）
                 if (images != null) {
                     val imgData = images.get(imgPath)
+                    log("Image", "查找图片: $imgPath, 找到=${imgData != null}, 大小=${imgData?.size}")
                     if (imgData != null) {
                         val opts = BitmapFactory.Options()
                         opts.inJustDecodeBounds = true
                         BitmapFactory.decodeByteArray(imgData, 0, imgData.size, opts)
+                        log("Image", "解码图片: width=${opts.outWidth}, height=${opts.outHeight}")
                         if (opts.outWidth > 0 && opts.outHeight > 0) {
                             var scale = contentWidth.toFloat() / opts.outWidth
                             imgW = contentWidth
@@ -585,6 +593,9 @@ class ReaderView : View {
                                 imgH = contentHeight / 2
                             }
                         }
+                    } else {
+                        // 打印所有可用的图片路径
+                        log("Image", "可用图片路径: ${images?.keys?.joinToString(", ")}")
                     }
                 }
 
@@ -1013,14 +1024,24 @@ class ReaderView : View {
     /** 在后台线程解码当前页的图片（懒解码） */
     /** 在调用线程解码当前页的图片 */
     private fun decodeCurrentPageImages() {
+        log("Image", "decodeCurrentPageImages: chapterImages=${chapterImages != null}, size=${chapterImages?.size}, currentPage=$currentPage, totalPages=$totalPages, pages.size=${pages.size}")
         if (chapterImages == null || currentPage >= pages.size) return
         val p = pages.get(currentPage)
+        log("Image", "页面图片数量: ${p.images.size}")
         var needsInvalidate = false
         for (i in p.images.indices) {
             val ib = p.images[i]
+            log("Image", "ImageBlock[$i]: path=${ib.path}, bitmap=${ib.bitmap != null}")
             if (ib.bitmap != null || ib.path == null) continue
-            val imgData = chapterImages?.get(ib.path) ?: continue
+            val imgData = chapterImages?.get(ib.path)
+            log("Image", "查找图片: ${ib.path}, 找到=${imgData != null}, 大小=${imgData?.size}")
+            if (imgData == null) {
+                // 打印所有可用的图片路径
+                log("Image", "可用图片路径: ${chapterImages?.keys?.joinToString(", ")}")
+                continue
+            }
             val bmp = BitmapFactory.decodeByteArray(imgData, 0, imgData.size)
+            log("Image", "解码结果: bmp=${bmp != null}")
             if (bmp == null) continue
             val rw = ib.rect?.width() ?: continue
             val rh = ib.rect?.height() ?: continue
@@ -1030,6 +1051,7 @@ class ReaderView : View {
             bitmapCache?.put("img_" + (ib.path ?: System.identityHashCode(this)), scaled)
             needsInvalidate = true
         }
+        log("Image", "invalidate=$needsInvalidate")
         if (needsInvalidate) invalidate()
     }
 

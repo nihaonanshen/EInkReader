@@ -219,7 +219,7 @@ pub fn parse_txt_bytes(
     };
 
     // 尝试解码
-    let full_text = try_decode(bytes, &encoding, file_path)?;
+    let (full_text, encoding) = try_decode(bytes, &encoding, file_path)?;
 
     // 行偏移构建
     let line_offsets = build_line_offsets(&full_text);
@@ -363,8 +363,10 @@ pub fn parse_txt_bytes(
     })
 }
 
-/// 尝试用指定编码解码，失败时尝试回退编码
-fn try_decode(bytes: &[u8], encoding: &str, _file_path: &str) -> Result<String, String> {
+/// 尝试用指定编码解码，失败时尝试回退编码。
+/// 返回 (解码文本, 实际使用的编码)——回退成功后实际编码可能不同于初值，
+/// 调用方必须用返回值而非检测初值，否则下游（进度/续读缓存键等）会用错编码。
+fn try_decode(bytes: &[u8], encoding: &str, _file_path: &str) -> Result<(String, String), String> {
     // 先用检测到的编码尝试
     let enc = encoding_rs::Encoding::for_label(encoding.as_bytes()).unwrap_or(encoding_rs::UTF_8);
     let (text, _, had_errors) = enc.decode(bytes);
@@ -394,14 +396,14 @@ fn try_decode(bytes: &[u8], encoding: &str, _file_path: &str) -> Result<String, 
                 return try_fallback_decode(bytes, encoding);
             }
         }
-        return Ok(text.to_string());
+        return Ok((text.to_string(), encoding.to_string()));
     }
 
     // 当前编码失败，尝试回退
     try_fallback_decode(bytes, encoding)
 }
 
-fn try_fallback_decode(bytes: &[u8], skip_encoding: &str) -> Result<String, String> {
+fn try_fallback_decode(bytes: &[u8], skip_encoding: &str) -> Result<(String, String), String> {
     for enc_name in encoding::FALLBACK_ENCODINGS {
         if *enc_name == skip_encoding {
             continue;
@@ -409,13 +411,14 @@ fn try_fallback_decode(bytes: &[u8], skip_encoding: &str) -> Result<String, Stri
         if let Some(enc) = encoding_rs::Encoding::for_label(enc_name.as_bytes()) {
             let (text, _, _) = enc.decode(bytes);
             if !text.is_empty() {
-                return Ok(text.to_string());
+                // 报告实际使用的编码
+                return Ok((text.to_string(), enc_name.to_string()));
             }
         }
     }
     // 所有编码都失败，UTF-8 兜底
     let (text, _, _) = encoding_rs::UTF_8.decode(bytes);
-    Ok(text.to_string())
+    Ok((text.to_string(), "UTF-8".to_string()))
 }
 
 /// 构建行偏移数组
@@ -455,17 +458,22 @@ fn extract_lines(text: &str, offsets: &[usize], start_line: usize, end_line: usi
     text[start..end].to_string()
 }
 
-/// 按字数分割章节（后备方案）
+/// 按字数分割章节（后备方案）。
+/// 注意：按**字符数**而非字节数统计（中文 3 字节/字符，用 .len() 会早切一半以上），
+/// 与 Kotlin 版 TxtParser 的 `current.length >= charsPerChapter`（UTF-16 单元）语义对齐。
+/// 用累加计数器统计字符数，避免每次 chars().count() 从头遍历导致 O(n²)。
 fn split_by_size(lines: &[String], chars_per_chapter: usize) -> Vec<Chapter> {
     let mut chapters = Vec::new();
     let mut current = String::new();
+    let mut current_chars = 0usize;
     let mut chapter_num = 1usize;
     let mut line_start = 0usize;
 
     for (i, line) in lines.iter().enumerate() {
         current.push_str(line);
         current.push('\n');
-        if current.len() >= chars_per_chapter {
+        current_chars += line.chars().count() + 1; // +1 为 '\n'
+        if current_chars >= chars_per_chapter {
             chapters.push(Chapter {
                 title: format!("第{}段", chapter_num),
                 content: current.clone(),
@@ -474,6 +482,7 @@ fn split_by_size(lines: &[String], chars_per_chapter: usize) -> Vec<Chapter> {
                 index: Some(chapter_num - 1),
             });
             current = String::new();
+            current_chars = 0;
             line_start = i + 1;
             chapter_num += 1;
         }
@@ -530,6 +539,46 @@ mod tests {
         ];
         let chapters = split_by_size(&lines, 1500);
         assert!(chapters.len() >= 2);
+    }
+
+    #[test]
+    fn test_split_by_size_chinese_char_count() {
+        // 中文 3 字节/字符：按字符数 300 切分，若误用字节数会切成 ~100 字符/段
+        // 用 12 行、每行 100 字符 → 共 1200 字符
+        let lines: Vec<String> = (0..12).map(|_| "中".repeat(100)).collect();
+        let chapters = split_by_size(&lines, 300);
+        // 1200 字符 / 300 = 4 段（字符计数正确时）；字节误用时 ~12 段
+        assert_eq!(chapters.len(), 4, "应按字符数切分得到 4 段，实际: {}", chapters.len());
+    }
+
+    #[test]
+    fn test_try_decode_fallback_reports_actual_encoding() {
+        // GBK 编码的中文文本，但 forced/检测初值给 UTF-8 → 应回退到 GBK 并报告实际编码
+        let gbk_bytes = "你好世界，测试文本。".encode_gbk();
+        let (text, used_enc) = try_decode(&gbk_bytes, "UTF-8", "dummy.txt").expect("decode ok");
+        assert_eq!(used_enc, "GBK", "回退后应报告实际编码 GBK，得到: {}", used_enc);
+        assert_eq!(text, "你好世界，测试文本。");
+    }
+
+    #[test]
+    fn test_try_decode_no_fallback_reports_input_encoding() {
+        // 正确编码时保持初值
+        let utf8_bytes = "你好世界".as_bytes();
+        let (text, used_enc) = try_decode(utf8_bytes, "UTF-8", "dummy.txt").expect("decode ok");
+        assert_eq!(used_enc, "UTF-8");
+        assert_eq!(text, "你好世界");
+    }
+
+    /// 测试辅助：把 str 按 GBK 编码（避免测试依赖 encoding_rs 暴露）
+    trait GbkEncode {
+        fn encode_gbk(&self) -> Vec<u8>;
+    }
+    impl GbkEncode for str {
+        fn encode_gbk(&self) -> Vec<u8> {
+            use encoding_rs::GBK;
+            let (bytes, _, _) = GBK.encode(self);
+            bytes.into_owned()
+        }
     }
 
     #[test]

@@ -193,6 +193,8 @@ pub(super) fn parse_xhtml(html: &str, base_dir: &str) -> XhtmlContent {
 /// 返回归一化路径（反斜杠转正斜杠、去掉 ./、解析 ../、URL 解码）。
 /// 外链（http/https/data）与以 / 开头的路径原样返回（无法从 ZIP 读取）。
 fn resolve_img_path(base_dir: &str, src: &str) -> String {
+    use super::zip_utils::normalize_path;
+    
     let src = src.trim();
     if src.is_empty() {
         return String::new();
@@ -205,21 +207,10 @@ fn resolve_img_path(base_dir: &str, src: &str) -> String {
     {
         return src.to_string();
     }
-    let src = src.replace('\\', "/");
-    // 去掉 ./ 前缀
-    let src = src.strip_prefix("./").unwrap_or(&src);
-    // 拼接章节目录
-    let combined = format!("{}{}", base_dir, src);
-    // 逐段解析 ../（去掉上一级目录段）
-    let mut parts: Vec<&str> = Vec::new();
-    for seg in combined.split('/') {
-        if seg == ".." {
-            parts.pop();
-        } else if !seg.is_empty() && seg != "." {
-            parts.push(seg);
-        }
-    }
-    parts.join("/")
+    // URL 解码（支持 %20 等编码）
+    let src = urlencoding::decode(src).unwrap_or_else(|_| std::borrow::Cow::Borrowed(src)).into_owned();
+    // 路径规范化
+    normalize_path(&format!("{}{}", base_dir, src))
 }
 
 /// 从字节流 pos 位置解码一个 UTF-8 字符（O(1)，只处理当前字符）
@@ -252,17 +243,34 @@ fn decode_utf8_at(bytes: &[u8], pos: usize) -> Option<char> {
     char::from_u32(cp)
 }
 
-/// 从 img 标签中提取 src 属性
+/// 从 img 标签中提取 src 属性（支持 SVG <image> 标签）
+///
+/// 优先取真正的 `src` 属性。注意：微信读书源的 EPUB 中 `<img>` 常写成
+/// `<img data-src="https://..." src="data-url-image.jpeg"/>` —— `data-src` 是原始外链，
+/// `src` 才是 ZIP 内可用的本地图。必须精确匹配 `src=`（不能把 `data-src` 的子串误当 src），
+/// 且 `src` 存在时优先于 `data-src` 返回。
 fn extract_img_src(html_after_tag: &str) -> Option<String> {
+    // 1) 精确匹配 src= 属性（排除 data-src / lazy-src 等带前缀的变体）
+    let mut candidate_src: Option<String> = None;
+    let mut candidate_data_src: Option<String> = None;
+
     let bytes = html_after_tag.as_bytes();
     let len = bytes.len();
     let mut i = 0;
-    while i + 5 < len {
+    // data-src 分支需要访问 bytes[i+8]，循环条件必须保证 i+8 安全
+    while i + 8 < len {
+        // 检查是否为独立属性名 src=（前一个字符必须是空白/引号/标签开始，即不在 data- 等前缀后）
         if (bytes[i] as char == 's' || bytes[i] as char == 'S')
             && (bytes[i+1] as char == 'r' || bytes[i+1] as char == 'R')
             && (bytes[i+2] as char == 'c' || bytes[i+2] as char == 'C')
             && bytes[i+3] as char == '='
         {
+            // 向前看：src 前面必须是属性边界（空白、>、引号），不能是 '-'（如 data-src）
+            let prev = if i > 0 { bytes[i-1] as char } else { ' ' };
+            if prev == '-' || prev == ':' || prev.is_ascii_alphanumeric() || prev == '_' {
+                i += 1;
+                continue;
+            }
             i += 4;
             let q = bytes[i] as char;
             if q != '"' && q != '\'' { continue; }
@@ -271,13 +279,63 @@ fn extract_img_src(html_after_tag: &str) -> Option<String> {
             while end < len && (bytes[end] as char) != q { end += 1; }
             if end > start && end < len {
                 let src = std::str::from_utf8(&bytes[start..end]).unwrap_or_default().to_string();
-                return Some(if src.starts_with("./") { src[2..].to_string() } else { src });
+                let cleaned = if src.starts_with("./") { src[2..].to_string() } else { src };
+                // HTML 语义：真正的 src 优先于 data-src，直接返回
+                return Some(cleaned);
             }
             return None;
         }
+        // data-src 变体（微信读书源）：仅当没有真正的 src 时才作为兜底
+        if (bytes[i] as char == 'd' || bytes[i] as char == 'D')
+            && (bytes[i+1] as char == 'a' || bytes[i+1] as char == 'A')
+            && (bytes[i+2] as char == 't' || bytes[i+2] as char == 'T')
+            && (bytes[i+3] as char == 'a' || bytes[i+3] as char == 'A')
+            && bytes[i+4] as char == '-'
+            && (bytes[i+5] as char == 's' || bytes[i+5] as char == 'S')
+            && (bytes[i+6] as char == 'r' || bytes[i+6] as char == 'R')
+            && (bytes[i+7] as char == 'c' || bytes[i+7] as char == 'C')
+            && bytes[i+8] as char == '='
+        {
+            i += 9;
+            let q = bytes[i] as char;
+            if q != '"' && q != '\'' { continue; }
+            let start = i + 1;
+            let mut end = start;
+            while end < len && (bytes[end] as char) != q { end += 1; }
+            if end > start && end < len {
+                let src = std::str::from_utf8(&bytes[start..end]).unwrap_or_default().to_string();
+                if candidate_data_src.is_none() {
+                    candidate_data_src = Some(if src.starts_with("./") { src[2..].to_string() } else { src });
+                }
+            }
+        }
+        // 也支持 xlink:href 格式（SVG）：xlink:href = 11 字符
+        if (bytes[i] as char == 'x' || bytes[i] as char == 'X')
+            && bytes.get(i+1..).unwrap_or(&[]).windows(10).any(|w| {
+                w.iter().zip("link:href".as_bytes()).all(|(a, b)| a.eq_ignore_ascii_case(b))
+            }) {
+            i += 11;
+            let Some(q) = bytes.get(i) else { i -= 1; continue; };
+            if *q != b'"' && *q != b'\'' { continue; }
+            let start = i + 1;
+            let mut end = start;
+            while end < len && bytes[end] != *q { end += 1; }
+            if end > start && end < len {
+                return Some(std::str::from_utf8(&bytes[start..end]).unwrap_or_default().to_string());
+            }
+            // 找不到闭合引号：跳过，继续扫描其他属性
+            continue;
+        }
         i += 1;
     }
-    None
+    // 没有 src 时用 data-src 兜底
+    candidate_src.or(candidate_data_src)
+}
+
+/// 检查是否是支持的图片格式
+pub fn is_image_path(path: &str) -> bool {
+    use super::zip_utils::is_image_path as _is_image_path;
+    _is_image_path(path)
 }
 
 /// 清理 HTML 为纯文本（保留换行结构）—— 保留给测试与兼容场景
@@ -528,6 +586,46 @@ mod tests {
         let parsed3 = parse_xhtml(html3, "Text/");
         assert_eq!(parsed3.image_paths, vec!["https://example.com/a.jpg"]);
         assert!(parsed3.text.contains("[[IMAGE:https://example.com/a.jpg]]"));
+    }
+
+    #[test]
+    fn test_extract_img_src_prefers_src_over_data_src() {
+        // 微信读书源：<img data-src="https://外链" src="本地图"/> —— 必须优先取 src
+        let tag = r#"<img alt="" class="qqreader-fullimg" data-src="https://res.weread.qq.com/wrepub/CB_1_a1.jpg" src="data-url-image.jpeg"/>"#;
+        assert_eq!(extract_img_src(tag).as_deref(), Some("data-url-image.jpeg"));
+
+        // 只有 data-src 没有 src 时兜底用 data-src
+        let tag2 = r#"<img data-src="https://example.com/x.jpg"/>"#;
+        assert_eq!(extract_img_src(tag2).as_deref(), Some("https://example.com/x.jpg"));
+
+        // 常规 src 不受影响
+        let tag3 = r#"<img src="../Images/00005.jpeg"/>"#;
+        assert_eq!(extract_img_src(tag3).as_deref(), Some("../Images/00005.jpeg"));
+    }
+
+    #[test]
+    fn test_extract_img_src_svg_xlink() {
+        // SVG <image xlink:href="..."> 分支
+        let tag = r#"<image xlink:href="Images/fig1.svg"/>"#;
+        assert_eq!(extract_img_src(tag).as_deref(), Some("Images/fig1.svg"));
+    }
+
+    #[test]
+    fn test_extract_img_src_short_input_no_panic() {
+        // 短输入/边界不应 panic
+        assert_eq!(extract_img_src(""), None);
+        assert_eq!(extract_img_src("<img>"), None);
+        assert_eq!(extract_img_src("<img src"), None);
+        assert_eq!(extract_img_src(r#"<img data-src="x"/>"#), Some("x".to_string()));
+    }
+
+    #[test]
+    fn test_parse_xhtml_data_src_image() {
+        // 完整解析：微信读书风格 img 提取本地 src
+        let html = r#"<html><body><p><img alt="" class="qqreader-fullimg" data-src="https://res.weread.qq.com/wrepub/CB_1_a1.jpg" src="data-url-image.jpeg"/></p></body></html>"#;
+        let parsed = parse_xhtml(html, "");
+        assert_eq!(parsed.image_paths, vec!["data-url-image.jpeg"]);
+        assert!(parsed.text.contains("[[IMAGE:data-url-image.jpeg]]"), "got: {:?}", parsed.text);
     }
 
     #[test]

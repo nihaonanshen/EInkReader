@@ -29,6 +29,7 @@ import android.widget.TextView
 import android.widget.Toast
 import com.einkreader.R
 import com.einkreader.core.model.Chapter
+import com.einkreader.core.model.TocItem
 import com.einkreader.core.NativeBridge
 import com.einkreader.core.refresh.EinkRefreshManager
 import com.einkreader.core.refresh.EinkRefreshManager.RefreshCallback
@@ -125,6 +126,9 @@ class ReaderActivity : Activity() {
     @Volatile
     private var isLoadingChapter = false
 
+    /** EPUB 目录树（来自 Rust 解析） */
+    private var epubTocItems: List<TocItem>? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         init(this)
@@ -198,14 +202,18 @@ class ReaderActivity : Activity() {
                         val row = ((y - itemTop) / tocItemHeightPx).toInt()
                         val startIdx = tocCurrentPage * tocPageSize
                         val clickIdx = startIdx + row
-                        if (clickIdx >= startIdx && clickIdx < startIdx + tocPageSize && clickIdx < tocItems.size && chapters != null && clickIdx < checkNotNull(chapters).size) {
+                        if (clickIdx >= startIdx && clickIdx < startIdx + tocPageSize && clickIdx < tocItems.size && chapters != null) {
                             log(
                                 "TOC",
                                 "点击目录项: row=" + row + " idx=" + clickIdx + " item=" + tocItems.get(
                                     clickIdx
                                 ) + " y=" + y + " itemTop=" + itemTop + " itemH=" + tocItemHeightPx
                             )
-                            switchChapterTo(clickIdx)
+                            // 尝试根据目录标题找到对应章节
+                            val chapterIdx = findChapterByTocIndex(clickIdx)
+                            if (chapterIdx >= 0 && chapterIdx < checkNotNull(chapters).size) {
+                                switchChapterTo(chapterIdx)
+                            }
                             exitFullOverlay()
                         } else if (x < w * 0.33f) {
                             tocPrevPage()
@@ -410,16 +418,75 @@ class ReaderActivity : Activity() {
         // ★ 动态计算目录布局，适配不同屏幕尺寸
         calculateTocLayout()
         val titles = ArrayList<String?>()
-        for (i in checkNotNull(chapters).indices) {
-            val c = checkNotNull(chapters).get(i)
-            var t = if (c.title.isNotEmpty()) c.title else ("第" + (i + 1) + "章")
-            if (i == currentChapterIndex) t = "▶ " + t
-            titles.add(t)
+
+        // 优先使用 Rust 解析的目录树（如果有）
+        if (epubTocItems != null && checkNotNull(epubTocItems).isNotEmpty()) {
+            flattenTocItems(checkNotNull(epubTocItems), titles, 0)
+        } else {
+            // 回退到章节列表
+            for (i in checkNotNull(chapters).indices) {
+                val c = checkNotNull(chapters).get(i)
+                var t = if (c.title.isNotEmpty()) c.title else ("第" + (i + 1) + "章")
+                if (i == currentChapterIndex) t = "▶ " + t
+                titles.add(t)
+            }
         }
+
         tocItems = titles
         // 自动定位到当前章所在页（否则长书目录里 ▶ 标记不可见）
         tocCurrentPage = if (tocPageSize > 0) currentChapterIndex / tocPageSize else 0
         renderTocPage()
+    }
+
+    /** 根据目录索引找到对应的章节索引 */
+    private fun findChapterByTocIndex(tocIndex: Int): Int {
+        if (epubTocItems == null || checkNotNull(epubTocItems).isEmpty()) return tocIndex
+        if (chapters == null || chapters.isNullOrEmpty()) return -1
+
+        // 展平目录树，记录每个目录项对应的章节索引
+        val tocEntries = mutableListOf<Pair<String, Int>>() // (href, chapterIndex)
+        flattenTocWithChapterIndex(checkNotNull(epubTocItems), tocEntries)
+
+        // 根据目录索引找到对应的 href，然后查找章节
+        if (tocIndex < tocEntries.size) {
+            val (targetHref, _) = tocEntries[tocIndex]
+            for ((idx, ch) in checkNotNull(chapters).withIndex()) {
+                if (ch.xhtmlPath == targetHref) return idx
+            }
+        }
+        return tocIndex // 回退到直接索引
+    }
+
+    /** 递归展平目录树为标题列表（用于显示） */
+    private fun flattenTocItems(items: List<TocItem>, out: MutableList<String?>, indent: Int) {
+        val prefix = " ".repeat(indent * 2)
+        for (item in items) {
+            val displayTitle = if (indent > 0) prefix + item.title else item.title
+            out.add(displayTitle)
+            if (item.children.isNotEmpty()) {
+                flattenTocItems(item.children, out, indent + 1)
+            }
+        }
+    }
+
+    /** 递归展平目录树，记录每个目录项的 href 和章节索引 */
+    private fun flattenTocWithChapterIndex(items: List<TocItem>, out: MutableList<Pair<String, Int>>) {
+        for (item in items) {
+            // 查找匹配的章节
+            var matchedIndex = -1
+            if (chapters != null) {
+                for ((idx, ch) in checkNotNull(chapters).withIndex()) {
+                    if (ch.xhtmlPath == item.href) {
+                        matchedIndex = idx
+                        break
+                    }
+                }
+            }
+            out.add(Pair(item.href, matchedIndex))
+            if (item.children.isNotEmpty()) {
+                flattenTocWithChapterIndex(item.children, out)
+            }
+        }
     }
 
     /**
@@ -696,6 +763,8 @@ class ReaderActivity : Activity() {
                         chapters = fch
                         fileKey = result.fileKey
                         epubImageBytes = HashMap(result.images)
+                        // 保存目录树供目录显示使用
+                        epubTocItems = if (result.tocItems.isNotEmpty()) result.tocItems else null
                         // ★ 提取封面图缓存到磁盘（书架显示用），images["__cover__"] 为 Rust 解析出的封面
                         cacheCoverToDisk(result.images["__cover__"])
                         // 恢复阅读进度
@@ -1048,7 +1117,7 @@ class ReaderActivity : Activity() {
             checkNotNull(readerView).beginBatchUpdate()
             checkNotNull(readerView).setTextSize(checkNotNull(prefs).getFloat("text_size", 28f))
             checkNotNull(readerView).setLineSpacing(checkNotNull(prefs).getInt("line_spacing", 14) / 10f)
-            checkNotNull(readerView).setParagraphSpacing(checkNotNull(prefs).getInt("para_spacing", 16) / 10f)
+            checkNotNull(readerView).setParagraphSpacing(checkNotNull(prefs).getInt("para_spacing", 10) / 10f)
             checkNotNull(readerView).setHorizontalMargin(checkNotNull(prefs).getInt("horizontal_margin", 10))
             checkNotNull(readerView).setFirstLineIndent(checkNotNull(prefs).getBoolean("first_line_indent", false))
             val fp: String = checkNotNull(prefs).getString("font_path", "") ?: ""

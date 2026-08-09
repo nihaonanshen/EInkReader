@@ -7,6 +7,7 @@ import android.util.Log
 import com.einkreader.core.FeatureFlags
 import com.einkreader.core.NativeBridge
 import com.einkreader.core.model.Chapter
+import com.einkreader.core.model.TocItem
 
 import com.einkreader.core.parser.TxtParser
 import com.einkreader.core.storage.BookStorage
@@ -47,6 +48,7 @@ class ReaderRepositoryImpl(
         var chapters: List<Chapter>? = null
         var images: Map<String, ByteArray>? = null
         var bookTitle = ""
+        var tocItems: List<TocItem>? = null
 
         try {
             if (isEpub) {
@@ -69,6 +71,8 @@ class ReaderRepositoryImpl(
                     chapters = r.chapters
                     images = r.images
                     bookTitle = r.title ?: ""
+                    // 使用 Rust 解析的目录树（如果有）
+                    tocItems = if (r.tocItems.isNotEmpty()) r.tocItems else null
                 }
             } else if (isTxt) {
                 val r = if (isContent && fileUri != null) {
@@ -118,7 +122,7 @@ class ReaderRepositoryImpl(
             savedChapter = 0; savedPage = 0
         }
 
-        return BookResult(chapters, images ?: LinkedHashMap(), bookTitle, fileKey, savedChapter, savedPage)
+        return BookResult(chapters, images ?: LinkedHashMap(), bookTitle, fileKey, savedChapter, savedPage, tocItems ?: emptyList())
     }
 
     override fun saveProgress(fileKey: String, chapterIndex: Int, pageIndex: Int, totalChapters: Int) {
@@ -162,19 +166,18 @@ class ReaderRepositoryImpl(
     override fun loadBookmarks(fileKey: String): List<String> {
         val list = JArrayList<String>()
         try {
-            for ((k, v) in bmPrefs(fileKey).getAll().entries) list.add("$k : $v")
+            // getAll() 返回 HashMap，顺序不稳定 → 按 key 排序保证书签面板顺序与跳转一致
+            val keys = bmPrefs(fileKey).getAll().keys.sorted()
+            for (k in keys) list.add("$k : ${bmPrefs(fileKey).getString(k, "")}")
         } catch (e: Exception) { Log.e(TAG, "loadBookmarks failed", e) }
         return list
     }
 
     override fun jumpToBookmark(fileKey: String, bookmarkIndex: Int, totalChapters: Int): Int {
         return try {
-            var i = 0
-            for (k in bmPrefs(fileKey).getAll().keys) {
-                if (i == bookmarkIndex) return k.substringBefore("_", k).toInt()
-                i++
-            }
-            0
+            val keys = bmPrefs(fileKey).getAll().keys.sorted()
+            if (bookmarkIndex in keys.indices) keys[bookmarkIndex].substringBefore("_", keys[bookmarkIndex]).toInt()
+            else 0
         } catch (e: Exception) { Log.e(TAG, "jumpToBookmark failed", e); 0 }
     }
 
@@ -222,14 +225,16 @@ class ReaderRepositoryImpl(
     private fun copyToTempFile(uri: String, suffix: String): File? {
         return try {
             val input = appContext.contentResolver.openInputStream(Uri.parse(uri)) ?: return null
-            val tf = File(appContext.cacheDir, "t${System.currentTimeMillis()}$suffix")
-            java.io.FileOutputStream(tf).use { fos ->
-                val buf = ByteArray(8192)
-                var n: Int
-                while (input.read(buf).also { n = it } != -1) fos.write(buf, 0, n)
+            // use{} 保证异常时也关闭输入流（之前裸 close()，IO 出错会泄漏）
+            input.use { ins ->
+                val tf = File(appContext.cacheDir, "t${System.nanoTime()}${System.currentTimeMillis()}$suffix")
+                java.io.FileOutputStream(tf).use { fos ->
+                    val buf = ByteArray(8192)
+                    var n: Int
+                    while (ins.read(buf).also { n = it } != -1) fos.write(buf, 0, n)
+                }
+                tf
             }
-            input.close()
-            tf
         } catch (e: Exception) { Log.e(TAG, "copyToTempFile failed", e); null }
     }
 }

@@ -76,8 +76,8 @@ class ReadingSettingsActivity : Activity() {
 
         // --- Load saved settings ---
         val savedTextSize = prefs.getFloat("text_size", 28f).toInt()
-        val savedLS = prefs.getInt("line_spacing", 14)   // 1.4 default (×10 for 0.1 precision)
-        val savedPS = prefs.getInt("para_spacing", 16)   // 1.6 default
+        val savedLS = prefs.getInt("line_spacing", 14)   // 1.4 default (×10 for 0.1 precision, range 0.1-3.0)
+        val savedPS = prefs.getInt("para_spacing", 10)   // 1.0 default (adjusted for 6-inch e-ink)
         val savedHM = prefs.getInt("horizontal_margin", 10)
 
         labelTextSize.text = savedTextSize.toString()
@@ -101,36 +101,36 @@ class ReadingSettingsActivity : Activity() {
             setResult(RESULT_OK)
         }
 
-        // --- Line spacing buttons (step = 0.1, range 0.1-3.0 → 10-300) ---
+        // --- Line spacing buttons (step = 0.1, range 0.1-3.0 → 1-30) ---
         fun updateLineSpacing(value: Int) {
-            val clamped = value.coerceIn(10, 300)
+            val clamped = value.coerceIn(1, 30)
             labelLineSpacing.text = String.format("%.1f", clamped / 10f)
             prefs.edit().putInt("line_spacing", clamped).apply()
             setResult(RESULT_OK)
         }
         btnLineMinus.setOnClickListener {
             val current = prefs.getInt("line_spacing", 14)
-            updateLineSpacing(current - 10)
+            updateLineSpacing(current - 1)
         }
         btnLinePlus.setOnClickListener {
             val current = prefs.getInt("line_spacing", 14)
-            updateLineSpacing(current + 10)
+            updateLineSpacing(current + 1)
         }
 
-        // --- Paragraph spacing buttons (step = 0.1, range 0.1-3.0 → 10-300) ---
+        // --- Paragraph spacing buttons (step = 0.1, range 0.1-3.0 → 1-30) ---
         fun updateParaSpacing(value: Int) {
-            val clamped = value.coerceIn(10, 300)
+            val clamped = value.coerceIn(1, 30)
             labelParaSpacing.text = String.format("%.1f", clamped / 10f)
             prefs.edit().putInt("para_spacing", clamped).apply()
             setResult(RESULT_OK)
         }
         btnParaMinus.setOnClickListener {
-            val current = prefs.getInt("para_spacing", 16)
-            updateParaSpacing(current - 10)
+            val current = prefs.getInt("para_spacing", 10)
+            updateParaSpacing(current - 1)
         }
         btnParaPlus.setOnClickListener {
-            val current = prefs.getInt("para_spacing", 16)
-            updateParaSpacing(current + 10)
+            val current = prefs.getInt("para_spacing", 10)
+            updateParaSpacing(current + 1)
         }
 
         // --- Horizontal margin buttons (step = 1, range 10-60) ---

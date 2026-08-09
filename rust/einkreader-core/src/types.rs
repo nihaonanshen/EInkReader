@@ -26,6 +26,14 @@ pub struct TxtParseResult {
     pub chapters: Vec<Chapter>,
 }
 
+/// EPUB 目录项（树形结构）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TocItem {
+    pub title: String,
+    pub href: String,
+    pub children: Vec<TocItem>,
+}
+
 /// EPUB 解析结果（Phase 3 使用）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EpubParseResult {
@@ -35,6 +43,9 @@ pub struct EpubParseResult {
     pub chapters: Vec<EpubChapter>,
     /// 图片数据：path -> base64 encoded bytes
     pub images: std::collections::HashMap<String, String>,
+    /// 目录树（来自 NCX 或 nav.xhtml）
+    #[serde(default)]
+    pub toc_items: Vec<TocItem>,
 }
 
 /// EPUB 章节（含图片列表，内容按需加载）

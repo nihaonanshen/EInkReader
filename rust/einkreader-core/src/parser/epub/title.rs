@@ -2,10 +2,12 @@
 
 use once_cell::sync::Lazy;
 use regex::Regex;
-use std::collections::HashMap;
 
+use super::toc::{find_ncx_title, NcxTitles};
 // 预编译正则（标题相关）
-static REGEX_FAKE_CHAPTER: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?i)^chapter[\s_\-]*\d*$").unwrap());
+// EasyPub 等工具生成的机器占位标题：chapter、Chapter 1、chapter_2、CHAPTER 12、chapter 1 - 0、chapter1-1 等
+static REGEX_FAKE_CHAPTER: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)^chapter[\s_\-]*\d+([\s_\-]+\d+)*$").unwrap());
 static REGEX_LEADING_CHAP: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"^(?i)(chapter|chap|ch|section|sec|part|lesson|unit|volume|vol|module)\s*").unwrap());
 static REGEX_TRAILING_SEP: Lazy<Regex> = Lazy::new(|| Regex::new(r"[._\-–\s]+$").unwrap());
@@ -44,65 +46,12 @@ pub(super) fn extract_title_from_raw(html: &str) -> Option<String> {
     None
 }
 
-/// 通过 NCX 映射表解析章节标题（多级匹配策略）
-pub(super) fn resolve_title(href: &str, ncx_titles: &HashMap<String, String>, _index: usize) -> String {
-    // 1. 原样匹配
-    if let Some(t) = ncx_titles.get(href) {
+/// 通过 NCX 映射表解析章节标题（多级匹配策略，支持大小写不敏感）
+pub(super) fn resolve_title(href: &str, ncx_titles: &NcxTitles, _index: usize) -> String {
+    // 使用增强的大小写不敏感查找
+    if let Some(t) = find_ncx_title(ncx_titles, href) {
         return t.clone();
     }
-
-    // 2. URL 解码
-    if let Ok(decoded) = urlencoding::decode(href) {
-        if let Some(t) = ncx_titles.get(decoded.as_ref()) {
-            return t.clone();
-        }
-    }
-
-    // 3. 去掉 ../ 或 ./
-    let stripped = href
-        .strip_prefix("../")
-        .or_else(|| href.strip_prefix("./"))
-        .unwrap_or(href);
-    if stripped != href {
-        if let Some(t) = ncx_titles.get(stripped) {
-            return t.clone();
-        }
-        if let Ok(decoded) = urlencoding::decode(stripped) {
-            if let Some(t) = ncx_titles.get(decoded.as_ref()) {
-                return t.clone();
-            }
-        }
-    }
-
-    // 4. 只匹配文件名
-    let filename = href.rsplit_once('/').map(|(_, f)| f).unwrap_or(href);
-    if let Some(t) = ncx_titles.get(filename) {
-        return t.clone();
-    }
-    if let Ok(decoded) = urlencoding::decode(filename) {
-        if let Some(t) = ncx_titles.get(decoded.as_ref()) {
-            return t.clone();
-        }
-    }
-
-    // 5. 不区分大小写
-    let filename_lower = filename.to_lowercase();
-    for (key, val) in ncx_titles {
-        let key_file = key.rsplit_once('/').map(|(_, f)| f).unwrap_or(key);
-        if key_file.eq_ignore_ascii_case(&filename_lower) {
-            return val.clone();
-        }
-    }
-
-    // ✅ 新增：包含匹配 fallback（解决路径前缀不一致问题）
-    // 例如 NCX key 是 "Text/chapter1.html"，但章节 href 是 "OEBPS/Text/chapter1.html"
-    // 此时可以检查是否有 ncx key 包含文件名
-    for (key, val) in ncx_titles {
-        if key.contains(filename) {
-            return val.clone();
-        }
-    }
-
     String::new()
 }
 
@@ -165,8 +114,15 @@ mod tests {
         assert!(is_placeholder_title("Chapter 1"));
         assert!(is_placeholder_title("chapter_2"));
         assert!(is_placeholder_title("CHAPTER 12"));
+        // EasyPub 机器占位标题：chapter 1 - 0 / chapter1-1 / chapter 1 - 2
+        assert!(is_placeholder_title("chapter 1 - 0"));
+        assert!(is_placeholder_title("Chapter 1 - 0"));
+        assert!(is_placeholder_title("chapter1-1"));
+        assert!(is_placeholder_title("chapter 12 - 3"));
+        // 带真实后缀的章节名不应误判
         assert!(!is_placeholder_title("第一章 初入江湖"));
         assert!(!is_placeholder_title("Chapter 1: 真正的标题"));
+        assert!(!is_placeholder_title("chapter 1 初入江湖"));
         assert!(!is_placeholder_title("序言"));
     }
 
@@ -214,7 +170,7 @@ mod tests {
 
     #[test]
     fn test_resolve_title() {
-        let mut map = HashMap::new();
+        let mut map = NcxTitles::default();
         map.insert("ch01.xhtml".to_string(), "第一章 开始".to_string());
         assert_eq!(resolve_title("ch01.xhtml", &map, 0), "第一章 开始");
         assert_eq!(resolve_title("unknown.xhtml", &map, 0), "");

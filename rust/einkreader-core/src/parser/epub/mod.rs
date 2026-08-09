@@ -36,7 +36,7 @@ use opf::parse_opf;
 use title::{extract_title_from_href, extract_title_from_raw, is_placeholder_title, resolve_title};
 use toc::parse_ncx;
 use xhtml::{parse_xhtml, XhtmlContent};
-use zip_utils::{get_raw_html, read_zip_entry_bytes};
+use zip_utils::{get_raw_html, find_image_entry, normalize_path};
 
 /// 最大文件尺寸 (150MB) — 防止 OOM，支持大型学术/教材类 EPUB
 const MAX_FILE_SIZE: u64 = 150 * 1024 * 1024;
@@ -101,8 +101,8 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
     // 2. OPF → 元数据 + manifest + spine
     let (opf_result, manifest, spine_hrefs) = parse_opf(&mut archive, &opf_path)?;
 
-    // 3. NCX → 标题映射
-    let ncx_titles = parse_ncx(&mut archive, &opf_dir, &opf_result);
+    // 3. NCX → 标题映射 + 目录树（第三项 = 目录来源文件，用于从正文章节剔除目录页）
+    let (toc_items, ncx_titles, toc_sources) = parse_ncx(&mut archive, &opf_dir, &opf_result);
 
     // 4. 逐章解析 spine（收集图片路径）
     let mut chapters: Vec<EpubChapter> = Vec::new();
@@ -111,6 +111,14 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
         // ✅ ZIP Slip 防护
         if sanitize_zip_path(href).is_none() {
             eprintln!("跳过不安全的路径: {}", href);
+            continue;
+        }
+
+        // ✅ 目录页剔除：目录来源文件（toc.html / nav.xhtml 等）不再作为正文章节，
+        //    避免阅读时第一章就是"Table Of Contents"
+        let href_normalized = normalize_path(href);
+        if toc_sources.iter().any(|s| s == &href_normalized) {
+            eprintln!("跳过目录页（不作为正文章节）: {}", href);
             continue;
         }
 
@@ -160,9 +168,10 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
 
     // 5. 提取图片字节（遍历章节引用的图片路径，而非 manifest——保证 key 与
     //    [[IMAGE:path]] 标记一致；JPEG 等二进制数据用字节读取，不能 read_to_string）
-    // 上限：单图 1MB，总图 8MB（与 Java fallback 一致）
+    // 上限：单图 1MB（防单图解码 OOM），总图 64MB（覆盖含大量插图的书，如《全球通史》
+    // 41MB、《人类大历史》9.8MB；过小的总配额会导致后半本书的图片全部被丢弃，阅读时空白）
     const MAX_IMAGE_BYTES: u64 = 1 * 1024 * 1024;
-    const MAX_TOTAL_IMAGE_BYTES: u64 = 8 * 1024 * 1024;
+    const MAX_TOTAL_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
     let mut images: HashMap<String, String> = HashMap::new();
     let mut all_image_paths: Vec<String> = Vec::new();
     // 封面图单独入 map（key 固定为 "__cover__"，供书架显示）
@@ -176,7 +185,8 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
         } else {
             format!("{}{}", opf_dir, cover_href)
         };
-        if let Some(bytes) = read_zip_entry_bytes(&mut archive, &cover_path) {
+        // 使用统一的图片查找函数
+        if let Some((_name, bytes)) = find_image_entry(&mut archive, &cover_path) {
             if !bytes.is_empty() && (bytes.len() as u64) <= MAX_IMAGE_BYTES {
                 images.insert(COVER_KEY.to_string(), STANDARD.encode(&bytes));
             }
@@ -194,15 +204,18 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
         if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("data:") {
             continue; // 外链图片无法从 ZIP 读取
         }
-        if let Some(bytes) = read_zip_entry_bytes(&mut archive, path) {
+        // 使用统一的图片查找函数
+        if let Some((_name, bytes)) = find_image_entry(&mut archive, path) {
             let len = bytes.len() as u64;
             if len > MAX_IMAGE_BYTES {
                 eprintln!("跳过超大图片: {} ({} bytes)", path, len);
                 continue;
             }
             if total_image_bytes >= MAX_TOTAL_IMAGE_BYTES {
+                // 已达总配额：跳过当前图，但继续遍历后续 —— 不 break，
+                // 否则配额耗尽后所有后续图片全部丢失，后半本书插图集体空白
                 eprintln!("图片总字节已达上限，跳过: {}", path);
-                break;
+                continue;
             }
             images.insert(path.clone(), STANDARD.encode(&bytes));
             total_image_bytes += len;
@@ -228,6 +241,7 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
         },
         chapters,
         images,
+        toc_items,
     })
 }
 

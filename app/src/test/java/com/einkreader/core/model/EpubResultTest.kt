@@ -36,4 +36,25 @@ class EpubResultTest {
         assertEquals(2, result.images.size)
         assertEquals(100, result.images["cover.jpg"]?.size)
     }
+
+    @Test
+    fun testEpubResultWithTocItems() {
+        val result = EpubResult()
+        val toc1 = TocItem()
+        toc1.title = "第一章"
+        toc1.href = "ch01.xhtml"
+        val toc2 = TocItem()
+        toc2.title = "第二章"
+        toc2.href = "ch02.xhtml"
+        val child = TocItem()
+        child.title = "2.1 子章节"
+        child.href = "ch02_1.xhtml"
+        toc2.children.add(child)
+        result.tocItems.add(toc1)
+        result.tocItems.add(toc2)
+        assertEquals(2, result.tocItems.size)
+        assertEquals("第一章", result.tocItems[0].title)
+        assertEquals(1, result.tocItems[1].children.size)
+        assertEquals("2.1 子章节", result.tocItems[1].children[0].title)
+    }
 }
