@@ -11,8 +11,9 @@ use crate::layout;
 use crate::parser;
 
 /// 编码检测
+// `data` 是原始 JNI 指针，调用方保证非空有效；标记 `unsafe` 符合 clippy `not_unsafe_ptr_arg_deref`
 #[no_mangle]
-pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeDetectEncoding(
+pub unsafe extern "system" fn Java_com_einkreader_core_NativeBridge_nativeDetectEncoding(
     env: JNIEnv,
     _class: JClass,
     data: jbyteArray,
@@ -178,8 +179,9 @@ pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLoadEpubChapt
 /// 批量文本布局（bincode 版）— 多个段落，相同参数
 /// 输入：texts 为 bincode 序列化的 Vec<String>，params 为 bincode 序列化的 LayoutParams
 /// 输出：bincode 序列化的 Vec<LayoutResult>
+// `texts_bin`/`params_bin` 是原始 JNI 指针，调用方保证非空有效；标记 `unsafe` 符合 clippy `not_unsafe_ptr_arg_deref`
 #[no_mangle]
-pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLayoutTextsBatchBinary(
+pub unsafe extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLayoutTextsBatchBinary(
     env: JNIEnv,
     _class: JClass,
     texts_bin: jbyteArray,

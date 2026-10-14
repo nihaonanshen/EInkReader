@@ -17,12 +17,14 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.KeyEvent
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.View.OnTouchListener
 import android.view.Window
 import android.view.WindowManager
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.SeekBar.OnSeekBarChangeListener
 import android.widget.TextView
@@ -31,6 +33,7 @@ import com.einkreader.R
 import com.einkreader.core.model.Chapter
 import com.einkreader.core.model.TocItem
 import com.einkreader.core.NativeBridge
+import com.einkreader.core.parser.HtmlCleaner
 import com.einkreader.core.refresh.EinkRefreshManager
 import com.einkreader.core.refresh.EinkRefreshManager.RefreshCallback
 
@@ -42,7 +45,6 @@ import com.einkreader.ui.reader.DebugLog.getLogFilePath
 import com.einkreader.ui.reader.DebugLog.init
 import com.einkreader.ui.reader.DebugLog.log
 import com.einkreader.ui.reader.ReaderView.OnPageChangeListener
-import kotlinx.coroutines.*
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -74,6 +76,8 @@ class ReaderActivity : Activity() {
     private var tocPageSize = 15 // 每页显示条目数（动态计算）
     private var tocItemHeightPx = 72 // 每个条目的高度（像素，动态计算）
     private var tocCurrentPage = 0
+    /** R2：目录逐行构建容器（每行一个 View，高度均分铺满，点击映射精确） */
+    private var tocRowsContainer: LinearLayout? = null
     private var tocTextSizeSp = 18f // 目录文字大小（SP）
     private var tocLayoutValid = false // ★ TOC 布局缓存标记
     private var bookmarkItems: MutableList<String?> = ArrayList<String?>()
@@ -104,13 +108,29 @@ class ReaderActivity : Activity() {
     private var currentChapterIndex = 0
     private var prefs: SharedPreferences? = null
     private var menuVisible = false
+    // R5：菜单无操作 10 秒自动缩回（仅当无覆盖层时生效，目录/书签打开时不缩回）
+    private val MENU_AUTO_HIDE_MS = 10000L
+    private val menuAutoHideRunnable = Runnable {
+        if (menuVisible && fullOverlayMode == FullOverlayMode.NONE) toggleMenu(false)
+    }
+
+    private fun startMenuAutoHide() {
+        checkNotNull(uiHandler).removeCallbacks(menuAutoHideRunnable)
+        checkNotNull(uiHandler).postDelayed(menuAutoHideRunnable, MENU_AUTO_HIDE_MS)
+    }
+
+    private fun stopMenuAutoHide() {
+        checkNotNull(uiHandler).removeCallbacks(menuAutoHideRunnable)
+    }
+
+    private fun resetMenuAutoHide() {
+        if (menuVisible) startMenuAutoHide()
+    }
     private var filePath: String? = null
     private var fileKey: String? = null
     private var uiHandler: Handler? = null
     private var readingStartTime: Long = 0
     
-    // ✅ [Phase 2] 协程作用域用于后台任务（替代 Thread）
-    private var bgScope: CoroutineScope? = null
 
     @Volatile
     private var isDestroyed = false
@@ -144,8 +164,6 @@ class ReaderActivity : Activity() {
         applyImmersiveMode()
 
         uiHandler = Handler(Looper.getMainLooper())
-        // ✅ [Phase 2] 初始化协程作用域
-        bgScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         
         prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
 
@@ -153,6 +171,14 @@ class ReaderActivity : Activity() {
         val lp = getWindow().getAttributes()
         lp.screenBrightness = savedBrightness
         getWindow().setAttributes(lp)
+
+        // ★ 前光控制（电纸书）：Android 窗口亮度对 E-ink 前光 LED 无效，
+        //   实际亮度走 sysfs（KOReader 同方案，见设备画像记忆）
+        //   /sys/class/backlight/mxc_msp430_fl.0/brightness，范围 0-100（rw system 组，需 su）
+        //   ★ 进入阅读界面【不自动写背光】（用户要求手动打开）：
+        //     只读取当前设备亮度作为 亮+/亮- 的步进基准；只有用户点击 亮+/亮- 时才写入。
+        //     旧逻辑会在 prefs 有 frontlight_brightness 时延迟自动恢复（用户反馈"自动开背光"）。
+        readFrontlightFromSysfs()
 
         refreshManager = EinkRefreshManager(this)
         refreshManager?.initialize(object : RefreshCallback {
@@ -189,37 +215,11 @@ class ReaderActivity : Activity() {
                     val density = getResources().getDisplayMetrics().density
                     val paddingPx = (16 * density).toInt() // TextView 的 padding 是 16dp
                     if (fullOverlayMode == FullOverlayMode.TOC) {
-                        // 计算点击的条目位置（考虑容器内 TextView 的实际布局）
-                        var textViewTop = 0
-                        if (fullTocText != null) {
-                            val loc = IntArray(2)
-                            checkNotNull(fullTocText).getLocationOnScreen(loc)
-                            val vloc = IntArray(2)
-                            v.getLocationOnScreen(vloc)
-                            textViewTop = loc[1] - vloc[1]
-                        }
-                        val itemTop = textViewTop + paddingPx
-                        val row = ((y - itemTop) / tocItemHeightPx).toInt()
-                        val startIdx = tocCurrentPage * tocPageSize
-                        val clickIdx = startIdx + row
-                        if (clickIdx >= startIdx && clickIdx < startIdx + tocPageSize && clickIdx < tocItems.size && chapters != null) {
-                            log(
-                                "TOC",
-                                "点击目录项: row=" + row + " idx=" + clickIdx + " item=" + tocItems.get(
-                                    clickIdx
-                                ) + " y=" + y + " itemTop=" + itemTop + " itemH=" + tocItemHeightPx
-                            )
-                            // 尝试根据目录标题找到对应章节
-                            val chapterIdx = findChapterByTocIndex(clickIdx)
-                            if (chapterIdx >= 0 && chapterIdx < checkNotNull(chapters).size) {
-                                switchChapterTo(chapterIdx)
-                            }
-                            exitFullOverlay()
-                        } else if (x < w * 0.33f) {
+                        // R2：目录已改为逐行构建，行内自行处理点击（中间跳转 / 左右翻页）；
+                        // 此处仅兜底处理行间隙或页码区的左右翻页
+                        if (x < w * 0.33f) {
                             tocPrevPage()
                         } else if (x > w * 0.67f) {
-                            tocNextPage()
-                        } else {
                             tocNextPage()
                         }
                     } else if (fullOverlayMode == FullOverlayMode.BOOKMARK) {
@@ -308,6 +308,16 @@ class ReaderActivity : Activity() {
 
         val savedSize = checkNotNull(prefs).getFloat("text_size", 28f)
 
+        // R6：菜单开着时点翻页区，第一次只收起菜单、不翻页（第二次才翻页）
+        checkNotNull(readerView).menuTurnInterceptor = {
+            if (menuVisible) {
+                toggleMenu(false)
+                true
+            } else {
+                false
+            }
+        }
+
         checkNotNull(readerView).setOnPageChangeListener(object : OnPageChangeListener {
             override fun onPageChanged(pageIndex: Int, totalPages: Int) {
                 log("Page", "onPageChanged: " + pageIndex + "/" + totalPages)
@@ -315,7 +325,27 @@ class ReaderActivity : Activity() {
                 saveProgress()
                 updateStatusBar()
                 updateInfoBar()
-                if (refreshManager != null) checkNotNull(refreshManager).onPageTurn(readerView)
+                // ★ 底部阅读进度（全书百分比，按章节数加权估算）
+                val chCount = chapters?.size ?: 0
+                if (chCount > 0 && totalPages > 0) {
+                    val percent = ((currentChapterIndex + (pageIndex + 1.0) / totalPages) / chCount * 100).toInt()
+                    readerView?.setBookProgress(percent.coerceIn(0, 100))
+                    // 底栏全书进度细线同步
+                    findViewById<android.widget.ProgressBar>(R.id.pb_book_progress)?.progress = percent.coerceIn(0, 100)
+                }
+                // ★ 接近章节末尾时预取下一章，翻章零等待
+                if (totalPages > 0 && pageIndex >= totalPages - 2) {
+                    preloadChapter(currentChapterIndex + 1)
+                }
+            }
+
+            override fun onPinchZoom(delta: Int) {
+                // ★ 双指缩放字号（KOReader 借鉴）
+                if (!bookLoaded) return
+                val cur = checkNotNull(prefs).getFloat("text_size", 28f)
+                val next = (cur + delta).coerceIn(14f, 64f)
+                checkNotNull(prefs).edit().putFloat("text_size", next).apply()
+                checkNotNull(readerView).setTextSize(next)
             }
 
             override fun onChapterChanged(chapterIndex: Int) {
@@ -358,13 +388,22 @@ class ReaderActivity : Activity() {
         if (readerView != null) checkNotNull(readerView).setTextSize(next)
     }
 
+    /**
+     * 前光亮度（0-100）：委托 FrontlightController（sysfs su 子进程管理已抽离）。
+     */
+    private fun readFrontlightFromSysfs() {
+        FrontlightController.readFromSysfs { }
+    }
+
+    private fun setFrontlight(value: Int) {
+        FrontlightController.set(value)
+    }
+
     private fun adjustBrightness(delta: Float) {
-        val lp = getWindow().getAttributes()
-        val cur = if (lp.screenBrightness > 0) lp.screenBrightness else 0.5f
-        val next = max(0.05f, min(1.0f, cur + delta))
-        lp.screenBrightness = next
-        getWindow().setAttributes(lp)
-        checkNotNull(prefs).edit().putFloat("screen_brightness", next).apply()
+        // 0-100 步进（按钮每次 ±10）
+        val next = max(0, min(100, FrontlightController.brightness + (delta * 100).toInt()))
+        setFrontlight(next)
+        checkNotNull(prefs).edit().putInt("frontlight_brightness", next).apply()
     }
 
     private enum class FullOverlayMode {
@@ -375,6 +414,7 @@ class ReaderActivity : Activity() {
 
     private fun openFullOverlay(mode: FullOverlayMode?) {
         fullOverlayMode = mode
+        log("UI", "openFullOverlay: mode=$mode")
         if (fullOverlay != null) checkNotNull(fullOverlay).setVisibility(View.VISIBLE)
         if (fullTocContainer != null) checkNotNull(fullTocContainer).setVisibility(if (mode == FullOverlayMode.TOC) View.VISIBLE else View.GONE)
         if (fullBookmarkContainer != null) checkNotNull(fullBookmarkContainer).setVisibility(if (mode == FullOverlayMode.BOOKMARK) View.VISIBLE else View.GONE)
@@ -401,12 +441,8 @@ class ReaderActivity : Activity() {
         if (menuVisible) {
             if (topStatusBar != null) checkNotNull(topStatusBar).setVisibility(View.VISIBLE)
             if (bottomMenu != null) checkNotNull(bottomMenu).setVisibility(View.VISIBLE)
-            val lp = checkNotNull(readerView).getLayoutParams() as FrameLayout.LayoutParams?
-            if (lp != null) {
-                lp.topMargin = (32 * getResources().getDisplayMetrics().density).toInt()
-                lp.bottomMargin = (160 * getResources().getDisplayMetrics().density).toInt()
-                checkNotNull(readerView).setLayoutParams(lp)
-            }
+            // R5：覆盖层关闭后若菜单仍显示，重新计时自动缩回
+            startMenuAutoHide()
         }
     }
 
@@ -417,11 +453,22 @@ class ReaderActivity : Activity() {
         }
         // ★ 动态计算目录布局，适配不同屏幕尺寸
         calculateTocLayout()
+        // R2：首次创建目录逐行容器（FrameLayout 中位于页码之上、从顶部铺满可用区）
+        if (tocRowsContainer == null && fullTocContainer != null) {
+            tocRowsContainer = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    tocPageSize * tocItemHeightPx,
+                    Gravity.TOP)
+            }
+            checkNotNull(fullTocContainer).addView(tocRowsContainer)
+        }
         val titles = ArrayList<String?>()
 
         // 优先使用 Rust 解析的目录树（如果有）
         if (epubTocItems != null && checkNotNull(epubTocItems).isNotEmpty()) {
-            flattenTocItems(checkNotNull(epubTocItems), titles, 0)
+            TocIndexMapper.flattenTitles(checkNotNull(epubTocItems), titles)
         } else {
             // 回退到章节列表
             for (i in checkNotNull(chapters).indices) {
@@ -433,66 +480,13 @@ class ReaderActivity : Activity() {
         }
 
         tocItems = titles
+        log("TOC", "loadTocList: epubTocItems=${epubTocItems?.size} chapters=${checkNotNull(chapters).size} titles=${titles.size}")
         // 自动定位到当前章所在页（否则长书目录里 ▶ 标记不可见）
         tocCurrentPage = if (tocPageSize > 0) currentChapterIndex / tocPageSize else 0
         renderTocPage()
     }
 
-    /** 根据目录索引找到对应的章节索引 */
-    private fun findChapterByTocIndex(tocIndex: Int): Int {
-        if (epubTocItems == null || checkNotNull(epubTocItems).isEmpty()) return tocIndex
-        if (chapters == null || chapters.isNullOrEmpty()) return -1
-
-        // 展平目录树，记录每个目录项对应的章节索引
-        val tocEntries = mutableListOf<Pair<String, Int>>() // (href, chapterIndex)
-        flattenTocWithChapterIndex(checkNotNull(epubTocItems), tocEntries)
-
-        // 根据目录索引找到对应的 href，然后查找章节
-        if (tocIndex < tocEntries.size) {
-            val (targetHref, _) = tocEntries[tocIndex]
-            for ((idx, ch) in checkNotNull(chapters).withIndex()) {
-                if (ch.xhtmlPath == targetHref) return idx
-            }
-        }
-        return tocIndex // 回退到直接索引
-    }
-
-    /** 递归展平目录树为标题列表（用于显示） */
-    private fun flattenTocItems(items: List<TocItem>, out: MutableList<String?>, indent: Int) {
-        val prefix = " ".repeat(indent * 2)
-        for (item in items) {
-            val displayTitle = if (indent > 0) prefix + item.title else item.title
-            out.add(displayTitle)
-            if (item.children.isNotEmpty()) {
-                flattenTocItems(item.children, out, indent + 1)
-            }
-        }
-    }
-
-    /** 递归展平目录树，记录每个目录项的 href 和章节索引 */
-    private fun flattenTocWithChapterIndex(items: List<TocItem>, out: MutableList<Pair<String, Int>>) {
-        for (item in items) {
-            // 查找匹配的章节
-            var matchedIndex = -1
-            if (chapters != null) {
-                for ((idx, ch) in checkNotNull(chapters).withIndex()) {
-                    if (ch.xhtmlPath == item.href) {
-                        matchedIndex = idx
-                        break
-                    }
-                }
-            }
-            out.add(Pair(item.href, matchedIndex))
-            if (item.children.isNotEmpty()) {
-                flattenTocWithChapterIndex(item.children, out)
-            }
-        }
-    }
-
-    /**
-     * ★ 动态计算目录每页条目数和行高
-     * 根据屏幕高度、字号、行距自动计算，适配不同尺寸的墨水屏
-     */
+    /** 动态计算目录每页条目数和行高 */
     private fun calculateTocLayout() {
         // ★ 缓存命中则跳过重算（屏幕尺寸在 Activity 生命周期内不变）
         if (tocLayoutValid) return
@@ -524,15 +518,19 @@ class ReaderActivity : Activity() {
         // 单行高度 = 字号 * 字体metrics(约1.2倍) + 行距额外
         val lineHeightPx = tocTextSizePx * 1.2f + lineSpacingExtraPx
         // 每个条目占 2 行（1行文字 + 1行空行 \n\n）
-        tocItemHeightPx = (lineHeightPx * 2).toInt()
-        if (tocItemHeightPx < 30) tocItemHeightPx = 30
+        val minItemHeightPx = (lineHeightPx * 2).toInt().coerceAtLeast(30)
 
-        // 每页条目数 = 可用高度 / 条目高度（向下取整，留底部页码空间）
+        // 每页条目数 = 可用高度 / 最小条目高度（向下取整，留底部页码空间）
         val pageLabelHeight = (30 * density).toInt() // 底部页码预留
         val usableHeight = textAvailHeight - pageLabelHeight
-        tocPageSize = usableHeight / tocItemHeightPx
-        if (tocPageSize < 5) tocPageSize = 5
-        if (tocPageSize > 30) tocPageSize = 30
+        var pageSize = usableHeight / minItemHeightPx
+        if (pageSize < 5) pageSize = 5
+        if (pageSize > 30) pageSize = 30
+        // ★ R2：条目高度按可用区精确均分，保证 pageSize × itemH ≈ usableHeight，
+        //   目录铺满屏幕不再底部留白（旧实现固定用 minItemHeightPx 导致每页底部空一大截）
+        tocPageSize = pageSize
+        tocItemHeightPx = usableHeight / tocPageSize
+        if (tocItemHeightPx < minItemHeightPx) tocItemHeightPx = minItemHeightPx
 
         log(
             "TOC", ("calculateTocLayout: screenH=" + screenHeight + " density=" + density
@@ -543,20 +541,77 @@ class ReaderActivity : Activity() {
     }
 
     private fun renderTocPage() {
-        if (fullTocText == null || fullTocPage == null) return
-        // 应用目录字体大小
-        checkNotNull(fullTocText).setTextSize(tocTextSizeSp)
+        if (fullTocContainer == null || fullTocPage == null) return
         val totalPages = (tocItems.size + tocPageSize - 1) / tocPageSize
         if (tocCurrentPage >= totalPages) tocCurrentPage = totalPages - 1
         if (tocCurrentPage < 0) tocCurrentPage = 0
         val start = tocCurrentPage * tocPageSize
         val end = min(start + tocPageSize, tocItems.size)
-        val sb = StringBuilder()
-        for (i in start..<end) {
-            sb.append(tocItems.get(i))
-            if (i < end - 1) sb.append("\n\n")
+
+        // R2：逐行构建目录（每行高度=tocItemHeightPx 精确均分铺满；渲染与点击映射一致，
+        // 不再依赖单 TextView 的推算行高——旧实现因此底部留白 + 点错行）
+        val rows = tocRowsContainer ?: return
+        rows.removeAllViews()
+        val night = checkNotNull(prefs).getBoolean("night_mode", false)
+        val currentColor = resources.getColor(if (night) R.color.ink_night else R.color.ink)
+        val otherColor = resources.getColor(if (night) R.color.ink_soft_night else R.color.ink_soft)
+        val surfaceMutedColor = resources.getColor(if (night) R.color.surface_muted_night else R.color.surface_muted)
+        for (i in start until end) {
+            val line = tocItems.get(i) ?: ""
+            val isCurrent = line.startsWith("▶ ")
+            val display = if (isCurrent) line.substring(2) else line
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding((16 * resources.displayMetrics.density).toInt(), 0, (16 * resources.displayMetrics.density).toInt(), 0)
+                setBackgroundColor(if (isCurrent) surfaceMutedColor else android.graphics.Color.TRANSPARENT)
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, tocItemHeightPx)
+                addView(TextView(this@ReaderActivity).apply {
+                    text = display
+                    textSize = tocTextSizeSp
+                    setTextColor(if (isCurrent) currentColor else otherColor)
+                    setTypeface(android.graphics.Typeface.DEFAULT, if (isCurrent) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            val idx = i
+            // 点击分区：左/右 10% 翻目录页，中间 80% 跳转章节
+            // ★ 跳转区从 34% 扩大到 80%：E-ink 触摸屏常有坐标偏移，用户点行中间若被
+            //   判入左右 33% 翻页区会"点击不跳转"（实际在翻目录页）
+            // ★ CANCEL 也当点击处理：Android 手指按下后微动超过 touch slop 会把 UP
+            //   替换成 ACTION_CANCEL（View 机制），旧实现只处理 UP → 手动点击全部失效
+            //   （adb 点击无移动所以正常，与"用户点行没反应"现象吻合）
+            var downX = 0f
+            row.setOnTouchListener { v, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        downX = event.x
+                        log("TOC", "row down: idx=$idx x=${event.x} y=${event.y}")
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        val w = v.width
+                        val x = downX
+                        log("TOC", "row ${if (event.action == MotionEvent.ACTION_CANCEL) "cancel" else "up"}: idx=$idx x=$x w=$w")
+                        if (x < w * 0.10f) {
+                            tocPrevPage()
+                        } else if (x > w * 0.90f) {
+                            tocNextPage()
+                        } else if (idx < tocItems.size && chapters != null) {
+                            log("TOC", "点击目录项: idx=$idx item=$line")
+                            val chapterIdx = TocIndexMapper.findChapterIndex(idx, epubTocItems, chapters)
+                            if (chapterIdx >= 0 && chapterIdx < checkNotNull(chapters).size) {
+                                switchChapterTo(chapterIdx)
+                            }
+                            exitFullOverlay()
+                        }
+                        true
+                    }
+                    else -> true
+                }
+            }
+            rows.addView(row)
         }
-        checkNotNull(fullTocText).setText(sb.toString())
         checkNotNull(fullTocPage).setText((tocCurrentPage + 1).toString() + " / " + totalPages)
     }
 
@@ -720,10 +775,22 @@ class ReaderActivity : Activity() {
                 }
             }, LOADING_TIMEOUT_MS)
         }
-        filePath = getIntent().getStringExtra("file_path")
-        currentFilePath = filePath
-        val fileUri = getIntent().getStringExtra("file_uri")
-        if ((filePath == null || checkNotNull(filePath).isEmpty()) && fileUri == null) {
+        var filePath = getIntent().getStringExtra("file_path")
+        var fileUri = getIntent().getStringExtra("file_uri")
+
+        // 兼容 ACTION_VIEW 启动方式（从文件管理器打开）
+        if ((filePath == null || filePath.isEmpty()) && fileUri == null) {
+            val intentData = getIntent().data
+            if (intentData != null) {
+                if (intentData.scheme == "file") {
+                    filePath = intentData.path
+                } else if (intentData.scheme == "content") {
+                    fileUri = intentData.toString()
+                }
+            }
+        }
+
+        if ((filePath == null || filePath.isEmpty()) && fileUri == null) {
             error("Load", "书籍路径为空")
             Toast.makeText(this, "书籍路径为空", Toast.LENGTH_SHORT).show()
             finish()
@@ -732,6 +799,11 @@ class ReaderActivity : Activity() {
 
         val fp = filePath
         val fu = (fileUri ?: filePath ?: "")
+
+        // ★ 懒加载修复：为成员变量赋值，供 triggerLazyLoadChapter 使用
+        //   （原代码第 724 行只赋值给了局部变量，成员变量 currentFilePath 恒为 null，
+        //    导致懒加载线程一进来就走 "currentFilePath is null" 分支退出，内容永远不加载）
+        this.currentFilePath = fp
 
         // ★ 后台线程执行解析 —— 使用 ReaderRepository 解耦所有业务逻辑
         Thread(Runnable {
@@ -771,17 +843,32 @@ class ReaderActivity : Activity() {
                         var sc = result.savedChapter
                         var sp = result.savedPage
 
-                        if (TocActivity.sSelectedChapter >= 0 && TocActivity.sSelectedChapter < fch.size) {
-                            sc = TocActivity.sSelectedChapter
-                            sp = 0
-                            TocActivity.sSelectedChapter = -1
-                        }
+                        // ✅ [P2-11 2026-10-15] 原 TocActivity.sSelectedChapter 跳转分支已删：
+                        //   sSelectedChapter 全仓无任何写入点（TocActivity 已不再被 startActivity 打开，
+                        //   目录/书签内嵌进 fullOverlay），读端 >= 0 恒 false，属死链。
+
                         if (sc < 0 || sc >= fch.size) {
                             sc = 0
                             sp = 0
                         }
                         currentChapterIndex = sc
-                        checkNotNull(readerView).setChapter(checkNotNull(chapters).get(currentChapterIndex))
+                        // EPUB 懒加载：如果初始章节内容未加载，先触发按需加载
+                        if (sc >= 0 && sc < checkNotNull(chapters).size) {
+                            val initialChapter = checkNotNull(chapters)[sc]
+                            if (initialChapter.content.isEmpty() && initialChapter.xhtmlPath != null && NativeBridge.Companion.sLibraryLoaded) {
+                                // 先设置章节（内容为空），然后触发懒加载
+                                currentChapterIndex = sc
+                                checkNotNull(readerView).setChapter(initialChapter)
+                                triggerLazyLoadChapter(initialChapter, sc)
+                                // 注意：triggerLazyLoadChapter 完成后会调用 switchChapterTo
+                                // 此处不直接 continue，等待懒加载回调
+                                // 但需要继续执行后续步骤
+                            } else {
+                                checkNotNull(readerView).setChapter(checkNotNull(chapters).get(currentChapterIndex))
+                            }
+                        } else {
+                            checkNotNull(readerView).setChapter(checkNotNull(chapters).get(currentChapterIndex))
+                        }
                         // ★ 传递图片字节数据给 ReaderView，用于 [[IMAGE:path]] 渲染
                         if (epubImageBytes != null) {
                             checkNotNull(readerView).setChapterImages(epubImageBytes)
@@ -827,7 +914,9 @@ class ReaderActivity : Activity() {
         val targetChapter = checkNotNull(chapters)[index]
         
         // EPUB 懒加载：检查章节内容是否为空，若为空且 xhtmlPath 存在则触发按需加载
-        if (targetChapter.content.isEmpty() && targetChapter.xhtmlPath != null && !isLoadingChapter) {
+        // lazyLoadAttempted 防止空章节触发无限重复加载（懒加载后仍为空时不再重试）
+        if (targetChapter.content.isEmpty() && targetChapter.xhtmlPath != null && !targetChapter.lazyLoadAttempted && !isLoadingChapter) {
+            targetChapter.lazyLoadAttempted = true
             triggerLazyLoadChapter(targetChapter, index)
             return
         }
@@ -836,49 +925,133 @@ class ReaderActivity : Activity() {
         checkNotNull(readerView).goToPage(0)
         updateStatusBar()
         updateInfoBar()
+        // ★ 预取下一章内容（后台线程），翻到章末时零等待
+        preloadChapter(index + 1)
     }
 
-    /** 触发 EPUB 章节懒加载 */
+    /**
+     * 读取章节文本（Rust JNI 优先，Java ZipFile 兜底）。
+     * 懒加载与后台预取共用；返回 null 表示读取失败。
+     */
+    private fun loadChapterText(chapter: Chapter, filePath: String): String? {
+        var text: String? = null
+        // 优先 Rust JNI：清理质量高（段落与 paragraphTypes 对齐、无空段、保留图片标记）
+        if (NativeBridge.Companion.sLibraryLoaded && chapter.xhtmlPath != null) {
+            try {
+                text = NativeBridge.bridgeInstance.loadEpubChapterContent(filePath, checkNotNull(chapter.xhtmlPath))
+                if (text != null && text!!.startsWith("{\"error")) {
+                    Log.w("ReaderActivity", "Rust 懒加载返回错误: $text，回退 Java")
+                    text = null
+                }
+            } catch (e: Exception) {
+                Log.w("ReaderActivity", "Rust 懒加载失败，回退 Java", e)
+                text = null
+            }
+        }
+        if (text == null && chapter.xhtmlPath != null) {
+            try {
+                val zip = java.util.zip.ZipFile(java.io.File(filePath))
+                val entry = zip.getEntry(checkNotNull(chapter.xhtmlPath))
+                if (entry != null) {
+                    val reader = java.io.InputStreamReader(zip.getInputStream(entry), java.nio.charset.StandardCharsets.UTF_8)
+                    val html = reader.readText()
+                    zip.close()
+                    // HTML 标签清理：统一换行符并消除所有空行（空行在布局中会多加整行高，造成段距异常）
+                    // 清洗规则统一收敛到 HtmlCleaner（与 EpubParserFallback 共用）
+                    text = HtmlCleaner.cleanForLayout(html)
+                } else {
+                    zip.close()
+                }
+            } catch (e: Exception) {
+                Log.w("ReaderActivity", "Java fallback 懒加载失败", e)
+                text = null
+            }
+        }
+        return text
+    }
+
+    /** 后台预取章节内容（翻章零等待）。预取失败不影响正式懒加载。 */
+    @Volatile
+    private var preloadingChapterIndex = -1
+
+    private fun preloadChapter(index: Int) {
+        if (chapters == null) return
+        if (index < 0 || index >= checkNotNull(chapters).size) return
+        val ch = checkNotNull(chapters)[index]
+        if (!ch.content.isEmpty() || ch.xhtmlPath == null) return
+        if (preloadingChapterIndex == index) return
+        val fp = currentFilePath ?: return
+        preloadingChapterIndex = index
+        Thread(Runnable {
+            try {
+                val text = loadChapterText(ch, fp)
+                if (text != null) {
+                    ch.content = text
+                    Log.d("ReaderActivity", "预取完成: ${ch.title} (${text.length} chars)")
+                }
+            } catch (e: Exception) {
+                // 忽略：翻章时正式懒加载会再试
+            } finally {
+                preloadingChapterIndex = -1
+            }
+        }).start()
+    }
+
+    /** 触发 EPUB 章节懒加载（翻章时按需加载） */
     private fun triggerLazyLoadChapter(chapter: Chapter, index: Int) {
+        Log.d("ReaderActivity", "triggerLazyLoadChapter: chapter=${chapter.title}, path=${chapter.xhtmlPath}, contentLen=${chapter.content.length}")
         if (isLoadingChapter) return
         isLoadingChapter = true
-        
+
         // 显示加载提示
         if (loadingOverlay != null) {
             checkNotNull(loadingFilename).setText("加载章节: ${chapter.title}")
             checkNotNull(loadingOverlay).setVisibility(View.VISIBLE)
         }
-        
-        bgScope?.launch(Dispatchers.IO) {
+
+        // 使用 Java ZipFile 直接读取章节内容
+        val filePath = currentFilePath ?: run {
+            Log.e("ReaderActivity", "currentFilePath is null")
+            isLoadingChapter = false
+            hideLoading()
+            return
+        }
+
+        Thread(Runnable {
             try {
-                val fp = currentFilePath
-                if (fp == null || !NativeBridge.Companion.sLibraryLoaded) {
-                    withContext(Dispatchers.Main) { isLoadingChapter = false; hideLoading() }
-                    return@launch
-                }
-                val content = NativeBridge.bridgeInstance.loadEpubChapterContent(fp, checkNotNull(chapter.xhtmlPath))
-                // 检查返回内容是否为错误 JSON（如 {"error":"..."}）
-                if (content.startsWith("{\"error\"")) {
-                    Log.w("ReaderActivity", "Lazy load chapter content error: $content")
-                    withContext(Dispatchers.Main) { isLoadingChapter = false; hideLoading() }
-                    return@launch
-                }
-                chapter.content = content
-                withContext(Dispatchers.Main) {
+                Log.d("ReaderActivity", "Lazy load: 打开 EPUB file=$filePath, entry=${chapter.xhtmlPath}")
+
+                // ★ 优先走 Rust JNI 加载章节内容（loadChapterText 内部处理 Rust/Java 双路径）
+                val text = loadChapterText(chapter, filePath)
+
+                chapter.content = text ?: ""
+                Log.d("ReaderActivity", "Lazy load chapter content loaded: ${text!!.length} chars")
+                uiHandler?.post(Runnable {
                     isLoadingChapter = false
                     hideLoading()
+                    if (text == null || text!!.isEmpty()) {
+                        // 空章节（如书籍中的空白过渡页 <p>&#160;</p>）：
+                        // 自动跳到下一章，避免停在空白页（最后一章空则显示占位符）
+                        if (index + 1 < checkNotNull(chapters).size) {
+                            Log.d("ReaderActivity", "空章节 ${chapter.title}，自动跳下一章")
+                            switchChapterTo(index + 1)
+                        } else {
+                            switchChapterTo(index)
+                        }
+                        return@Runnable
+                    }
                     // 重新切换到该章节（现在已有内容）
                     switchChapterTo(index)
-                }
+                })
             } catch (e: Exception) {
                 Log.e("ReaderActivity", "Lazy load chapter failed", e)
-                withContext(Dispatchers.Main) {
+                uiHandler?.post(Runnable {
                     isLoadingChapter = false
                     hideLoading()
                     Toast.makeText(this@ReaderActivity, "章节加载失败", Toast.LENGTH_SHORT).show()
-                }
+                })
             }
-        }
+        }).start()
     }
 
     /** 隐藏加载 overlay */
@@ -888,18 +1061,10 @@ class ReaderActivity : Activity() {
         }
     }
 
-    private fun switchChapter(d: Int) {
-        if (chapters == null || checkNotNull(chapters).isEmpty()) return
-        val ni = currentChapterIndex + d
-        if (ni < 0 || ni >= checkNotNull(chapters).size) return
-        currentChapterIndex = ni
-        checkNotNull(readerView).setChapter(checkNotNull(chapters).get(currentChapterIndex))
-        updateStatusBar()
-    }
-
     private fun goToPrevChapter() {
         if (currentChapterIndex > 0) {
-            switchChapter(-1)
+            // switchChapterTo 内含 EPUB 懒加载检查（目标章节内容为空时先触发按需加载）
+            switchChapterTo(currentChapterIndex - 1)
             checkNotNull(readerView).goToPage(checkNotNull(readerView).totalPages - 1)
         } else {
             Toast.makeText(this, "已经是第一章了", Toast.LENGTH_SHORT).show()
@@ -908,8 +1073,8 @@ class ReaderActivity : Activity() {
 
     private fun goToNextChapter() {
         if (currentChapterIndex < checkNotNull(chapters).size - 1) {
-            switchChapter(1)
-            checkNotNull(readerView).goToPage(0)
+            // switchChapterTo 内含 EPUB 懒加载检查（目标章节内容为空时先触发按需加载）
+            switchChapterTo(currentChapterIndex + 1)
         } else {
             Toast.makeText(this, "已经是最后一章了", Toast.LENGTH_SHORT).show()
         }
@@ -917,28 +1082,18 @@ class ReaderActivity : Activity() {
 
     private fun toggleMenu(show: Boolean) {
         menuVisible = show
+        log("UI", "toggleMenu: show=$show")
         val vis = if (show) View.VISIBLE else View.GONE
         checkNotNull(topStatusBar).setVisibility(vis)
         checkNotNull(bottomMenu).setVisibility(vis)
         if (show) {
             updateStatusBar()
             updateInfoBar()
-            // 调整 ReaderView 以避开状态栏和底部菜单的遮挡
-            val lp = checkNotNull(readerView).getLayoutParams() as FrameLayout.LayoutParams?
-            if (lp != null) {
-                lp.topMargin = (32 * getResources().getDisplayMetrics().density).toInt()
-                lp.bottomMargin = (160 * getResources().getDisplayMetrics().density).toInt()
-                checkNotNull(readerView).setLayoutParams(lp)
-            }
+            // ★ 菜单覆盖式：不调整 ReaderView 边距、不重排正文（菜单直接盖在正文上方）
+            startMenuAutoHide()
         } else {
             exitFullOverlay()
-            // 恢复 ReaderView 铺满整屏
-            val lp = checkNotNull(readerView).getLayoutParams() as FrameLayout.LayoutParams?
-            if (lp != null) {
-                lp.topMargin = 0
-                lp.bottomMargin = 0
-                checkNotNull(readerView).setLayoutParams(lp)
-            }
+            stopMenuAutoHide()
         }
         applyImmersiveMode()
     }
@@ -1076,14 +1231,15 @@ class ReaderActivity : Activity() {
         val pageIdx = checkNotNull(readerView).currentPage
         val totalCh = checkNotNull(chapters).size
 
-        // ✅ [Phase 2] 使用协程替代 Thread，避免频繁创建销毁线程
-        bgScope?.launch(Dispatchers.IO) {
+        // ✅ 后台线程保存进度（Android 4.4 无 JDK 8 方法，协程在 API 19 上不可靠，
+        //    统一改为 Thread(Runnable) 方案）
+        Thread(Runnable {
             try {
                 getReaderRepository().saveProgress(checkNotNull(fileKey), chIdx, pageIdx, totalCh)
             } catch (e: Exception) {
                 error("Progress", "saveProgress failed", e)
             }
-        }
+        }).start()
     }
 
     private fun persistBookRecord(
@@ -1109,6 +1265,14 @@ class ReaderActivity : Activity() {
         super.onActivityResult(req, res, data)
     }
 
+    override fun dispatchTouchEvent(ev: MotionEvent?): Boolean {
+        // R5：菜单显示期间任意触摸都重置自动缩回计时
+        if (menuVisible && ev?.action == MotionEvent.ACTION_DOWN) {
+            resetMenuAutoHide()
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     override fun onResume() {
         super.onResume()
         if (readerView != null) {
@@ -1118,12 +1282,29 @@ class ReaderActivity : Activity() {
             checkNotNull(readerView).setTextSize(checkNotNull(prefs).getFloat("text_size", 28f))
             checkNotNull(readerView).setLineSpacing(checkNotNull(prefs).getInt("line_spacing", 14) / 10f)
             checkNotNull(readerView).setParagraphSpacing(checkNotNull(prefs).getInt("para_spacing", 10) / 10f)
+            // ★ 文字渲染优化（KOReader 借鉴）：对比度（黑度）+ 字体 hinting
+            checkNotNull(readerView).setTextContrast(checkNotNull(prefs).getInt("text_contrast", 100))
+            checkNotNull(readerView).setFontHinting(checkNotNull(prefs).getInt("font_hinting", 0) == 1)
+            // ★ 全局伪粗体（E-ink 对比度增强）
+            checkNotNull(readerView).setBoldMode(checkNotNull(prefs).getBoolean("bold_mode", false))
+            // ★ 翻页区域模式（KOReader 借鉴）
+            checkNotNull(readerView).setTapZoneMode(checkNotNull(prefs).getInt("tap_zone_mode", 0))
             checkNotNull(readerView).setHorizontalMargin(checkNotNull(prefs).getInt("horizontal_margin", 10))
             checkNotNull(readerView).setFirstLineIndent(checkNotNull(prefs).getBoolean("first_line_indent", false))
             val fp: String = checkNotNull(prefs).getString("font_path", "") ?: ""
             if (!fp.isEmpty()) {
-                val ff = File(fp)
-                if (ff.exists()) checkNotNull(readerView).setCustomTypeface(Typeface.createFromFile(ff))
+                if (fp.startsWith("asset:")) {
+                    // 内置 assets 字体（如 GB2312 中文字体子集）
+                    try {
+                        val tf = Typeface.createFromAsset(assets, fp.substring("asset:".length))
+                        checkNotNull(readerView).setCustomTypeface(tf)
+                    } catch (e: Exception) {
+                        log("Font", "load asset font failed: ${e.message}")
+                    }
+                } else {
+                    val ff = File(fp)
+                    if (ff.exists()) checkNotNull(readerView).setCustomTypeface(Typeface.createFromFile(ff))
+                }
             }
             checkNotNull(readerView).commitBatchUpdate()
         }
@@ -1167,11 +1348,7 @@ class ReaderActivity : Activity() {
 
     override fun onDestroy() {
         log("Lifecycle", "onDestroy")
-        // ✅ [Phase 2] 清理后台协程，避免内存泄漏
-        bgScope?.cancel("Activity destroyed")
-        bgScope = null
-        
-        // ✅ [Phase 2] 移除 Handler 中所有 pending 消息
+        // ✅ 移除 Handler 中所有 pending 消息
         uiHandler?.removeCallbacksAndMessages(null)
         
         isDestroyed = true
@@ -1179,21 +1356,19 @@ class ReaderActivity : Activity() {
     }
 
     private fun applyNightMode(night: Boolean) {
-        val bg = if (night) -0xddddde else Color.WHITE
-        val fg = if (night) -0x444445 else Color.BLACK
-
+        // 背景类：走 *_night 系列资源（不再用硬编码魔数）
         val root = findViewById<View?>(R.id.root_container)
-        if (root != null) root.setBackgroundColor(bg)
+        if (root != null) root.setBackgroundColor(resources.getColor(if (night) R.color.background_night else R.color.background))
 
-        if (topStatusBar != null) checkNotNull(topStatusBar).setBackgroundColor(bg)
-        if (bottomMenu != null) checkNotNull(bottomMenu).setBackgroundColor(if (night) -0xd5d5d6 else -0xa0a0b)
-        if (fullOverlay != null) checkNotNull(fullOverlay).setBackgroundColor(bg)
-        if (loadingOverlay != null) checkNotNull(loadingOverlay).setBackgroundColor(bg)
+        if (topStatusBar != null) checkNotNull(topStatusBar).setBackgroundColor(resources.getColor(if (night) R.color.surface_muted_night else R.color.surface_muted))
+        if (bottomMenu != null) checkNotNull(bottomMenu).setBackgroundColor(resources.getColor(if (night) R.color.surface_muted_night else R.color.surface_muted))
+        if (fullOverlay != null) checkNotNull(fullOverlay).setBackgroundColor(resources.getColor(if (night) R.color.background_night else R.color.background))
+        if (loadingOverlay != null) checkNotNull(loadingOverlay).setBackgroundColor(resources.getColor(if (night) R.color.background_night else R.color.background))
 
+        // 按钮类：整组切换反色 selector（保持按压瞬时反色）
+        val btnDrawable = if (night) R.drawable.bg_button_eink_night else R.drawable.bg_button_eink
+        val btnText = if (night) R.color.btn_text_eink_night else R.color.btn_text_eink
         for (id in intArrayOf(
-            R.id.status_time,
-            R.id.status_chapter,
-            R.id.status_battery,
             R.id.btn_back,
             R.id.btn_toc,
             R.id.btn_bookmark,
@@ -1203,15 +1378,32 @@ class ReaderActivity : Activity() {
             R.id.btn_font_plus,
             R.id.btn_bright_minus,
             R.id.btn_bright_plus,
-            R.id.btn_full_refresh,
-            R.id.tv_chapter_page,
+            R.id.btn_full_refresh
+        )) {
+            val v = findViewById<View?>(id)
+            if (v != null) {
+                v.setBackgroundResource(btnDrawable)
+                if (v is TextView) v.setTextColor(resources.getColorStateList(btnText))
+            }
+        }
+
+        // 文字类
+        val fg = resources.getColor(if (night) R.color.ink_night else R.color.ink)
+        val muted = resources.getColor(if (night) R.color.ink_muted_night else R.color.ink_muted)
+        for (id in intArrayOf(
+            R.id.status_time,
+            R.id.status_chapter,
+            R.id.status_battery,
             R.id.tv_chapter_title,
-            R.id.tv_global_page,
             R.id.full_overlay_title,
             R.id.full_overlay_back
         )) {
             val v = findViewById<View?>(id)
             if (v is TextView) v.setTextColor(fg)
+        }
+        for (id in intArrayOf(R.id.tv_chapter_page, R.id.tv_global_page)) {
+            val v = findViewById<View?>(id)
+            if (v is TextView) v.setTextColor(muted)
         }
     }
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 按压时背景反色为 ink_night，文字变 surface_night -->
+    <item android:state_pressed="true" android:color="@color/surface_night" />
+    <item android:color="@color/ink_night" />
+</selector>

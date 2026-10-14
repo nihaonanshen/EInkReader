@@ -159,17 +159,10 @@ class EpubParserFallback {
             return Pair(title, spineHrefs)
         }
 
-        /** 从 HTML/XHTML 提取纯文本 */
+        /** 从 HTML/XHTML 提取纯文本（委托 HtmlCleaner，与懒加载兜底路径共用同一清洗规则） */
         private fun extractText(html: String): String {
-            // Android 4.4 KXmlParser 性能太差，直接正则提取
-            return html
-                .replace(Regex("<style[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                .replace(Regex("<script[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
-                .replace(Regex("<[^>]+>"), "\n")
-                .replace(Regex("&[a-zA-Z#][a-zA-Z0-9#]{1,7};"), " ")
-                .replace(Regex("[ \\t]+\n|\n[ \\t]+"), "\n")
-                .replace(Regex("\n{3,}"), "\n\n")
-                .trim()
+            // Android 4.4 KXmlParser 性能太差，直接正则提取（清洗规则统一收敛到 HtmlCleaner）
+            return HtmlCleaner.extractText(html)
         }
 
         /** 从 HTML 的 <title> 标签提取章节名（占位符如 "Chapter 1"/"chapter" 跳过，继续尝试 <h1>） */

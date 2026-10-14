@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="AppTheme" parent="@android:style/Theme.Holo.Light.NoActionBar">
-        <item name="android:windowBackground">@android:color/white</item>
-        <item name="android:textColor">@android:color/black</item>
+        <item name="android:windowBackground">@color/background</item>
+        <item name="android:colorBackground">@color/background</item>
+        <item name="android:textColor">@color/ink</item>
+        <item name="android:textColorPrimary">@color/ink</item>
+        <item name="android:textColorSecondary">@color/ink_muted</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <!-- 单核软件渲染：禁用窗口过渡动画，避免 Activity 切换掉帧 -->
+        <item name="android:windowAnimationStyle">@null</item>
     </style>
 </resources>

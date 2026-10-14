@@ -49,13 +49,24 @@
             android:name=".ui.reader.ReaderActivity"
             android:label="@string/reader"
             android:screenOrientation="portrait"
-            android:configChanges="orientation|screenSize" />
+            android:configChanges="orientation|screenSize"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/epub" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/zip" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+            </intent-filter>
+        </activity>
 
-        <!-- 目录页面 -->
-        <activity
-            android:name=".ui.reader.TocActivity"
-            android:label="目录"
-            android:screenOrientation="portrait" />
+        <!-- ✅ [P2-11 2026-10-15] TocActivity 注册已移除：
+             该 Activity 已无 startActivity 入口（目录/书签内嵌进 ReaderActivity 的 fullOverlay），
+             其唯一跨 Activity 通道 sSelectedChapter 也无任何写入点，属死链。
+             类文件保留（TocActivity.kt），重新启用时恢复此注册即可 -->
 
         <!-- 阅读设置页面 -->
         <activity

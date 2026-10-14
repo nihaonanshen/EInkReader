@@ -3,162 +3,518 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true"
-    android:background="@android:color/white">
+    android:background="@color/background">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="vertical"
-        android:padding="20dp">
+        android:padding="@dimen/spacing_lg">
 
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="阅读设置" android:textColor="@android:color/black"
-        android:textSize="22sp" android:textStyle="bold"
-        android:layout_marginBottom="24dp" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="阅读设置"
+            android:textColor="@color/ink"
+            android:textSize="@dimen/title_text_size"
+            android:textStyle="bold"
+            android:layout_marginBottom="@dimen/spacing_lg" />
 
-    <!-- 字体大小 -->
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="字体大小" android:textColor="@android:color/black"
-        android:textSize="18sp" android:layout_marginBottom="8dp" />
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:layout_marginBottom="20dp">
-        <TextView android:id="@+id/btn_font_minus"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:text="A-" android:textColor="@android:color/black"
-            android:textSize="18sp" android:textStyle="bold"
-            android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground" />
-        <TextView android:id="@+id/label_text_size"
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:gravity="center"
-            android:text="20" android:textColor="@android:color/black"
-            android:textSize="16sp" android:textStyle="bold"
-            android:paddingLeft="10dp" android:paddingRight="10dp" />
-        <TextView android:id="@+id/btn_font_plus"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:text="A+" android:textColor="@android:color/black"
-            android:textSize="18sp" android:textStyle="bold"
-            android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground" />
-    </LinearLayout>
+        <!-- ══════════ 分组：排版 ══════════ -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="排版"
+            android:textColor="@color/ink_muted"
+            android:textSize="@dimen/caption_text_size"
+            android:textStyle="bold"
+            android:layout_marginLeft="@dimen/spacing_sm"
+            android:layout_marginBottom="@dimen/spacing_xs" />
 
-    <!-- 行距 -->
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="行距" android:textColor="@android:color/black"
-        android:textSize="18sp" android:layout_marginBottom="8dp" />
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:layout_marginBottom="20dp">
-        <TextView
-            android:id="@+id/btn_line_minus"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:text="−" android:textColor="@android:color/black"
-            android:textSize="18sp" android:textStyle="bold"
-            android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground" />
-        <TextView android:id="@+id/label_line_spacing"
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:gravity="center"
-            android:text="1.4" android:textColor="@android:color/black"
-            android:textSize="16sp" android:textStyle="bold"
-            android:paddingLeft="10dp" android:paddingRight="10dp" />
-        <TextView
-            android:id="@+id/btn_line_plus"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:text="+" android:textColor="@android:color/black"
-            android:textSize="18sp" android:textStyle="bold"
-            android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground" />
-    </LinearLayout>
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_card"
+            android:paddingLeft="@dimen/spacing_lg"
+            android:paddingRight="@dimen/spacing_lg"
+            android:paddingTop="@dimen/spacing_md"
+            android:paddingBottom="@dimen/spacing_md"
+            android:layout_marginBottom="@dimen/spacing_lg">
 
-    <!-- 段距 -->
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="段距" android:textColor="@android:color/black"
-        android:textSize="18sp" android:layout_marginBottom="8dp" />
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:layout_marginBottom="20dp">
-        <TextView
-            android:id="@+id/btn_para_minus"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:text="−" android:textColor="@android:color/black"
-            android:textSize="18sp" android:textStyle="bold"
-            android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground" />
-        <TextView android:id="@+id/label_para_spacing"
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:gravity="center"
-            android:text="1.6" android:textColor="@android:color/black"
-            android:textSize="16sp" android:textStyle="bold"
-            android:paddingLeft="10dp" android:paddingRight="10dp" />
-        <TextView
-            android:id="@+id/btn_para_plus"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:text="+" android:textColor="@android:color/black"
-            android:textSize="18sp" android:textStyle="bold"
-            android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground" />
-    </LinearLayout>
+            <!-- 字体大小 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="字体大小"
+                android:textColor="@color/ink"
+                android:textSize="@dimen/body_text_size"
+                android:layout_marginBottom="@dimen/spacing_sm" />
 
-    <!-- 左右边距 -->
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="左右边距" android:textColor="@android:color/black"
-        android:textSize="18sp" android:layout_marginBottom="8dp" />
-    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:orientation="horizontal" android:gravity="center_vertical"
-        android:layout_marginBottom="20dp">
-        <TextView
-            android:id="@+id/btn_margin_minus"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:text="−" android:textColor="@android:color/black"
-            android:textSize="18sp" android:textStyle="bold"
-            android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground" />
-        <TextView android:id="@+id/label_horizontal_margin"
-            android:layout_width="0dp" android:layout_height="wrap_content"
-            android:layout_weight="1" android:gravity="center"
-            android:text="10" android:textColor="@android:color/black"
-            android:textSize="16sp" android:textStyle="bold"
-            android:paddingLeft="10dp" android:paddingRight="10dp" />
-        <TextView
-            android:id="@+id/btn_margin_plus"
-            android:layout_width="44dp" android:layout_height="44dp"
-            android:text="+" android:textColor="@android:color/black"
-            android:textSize="18sp" android:textStyle="bold"
-            android:gravity="center" android:background="#FFFFFF"
-            android:clickable="true"
-            android:foreground="?android:attr/selectableItemBackground" />
-    </LinearLayout>
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="@dimen/spacing_lg">
 
-        <!-- 首行缩进开关 -->
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
-            android:orientation="horizontal" android:gravity="center_vertical"
-            android:layout_marginBottom="20dp">
-            <TextView android:layout_width="0dp" android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:text="首行缩进" android:textColor="@android:color/black"
-                android:textSize="18sp" />
-            <Switch android:id="@+id/switch_first_line_indent"
-                android:layout_width="wrap_content" android:layout_height="wrap_content"
-                android:checked="false" />
+                <TextView
+                    android:id="@+id/btn_font_minus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="A-"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+
+                <TextView
+                    android:id="@+id/label_text_size"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="20"
+                    android:textColor="@color/ink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp" />
+
+                <TextView
+                    android:id="@+id/btn_font_plus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="A+"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+            </LinearLayout>
+
+            <!-- 行距 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="行距"
+                android:textColor="@color/ink"
+                android:textSize="@dimen/body_text_size"
+                android:layout_marginBottom="@dimen/spacing_sm" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="@dimen/spacing_lg">
+
+                <TextView
+                    android:id="@+id/btn_line_minus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="−"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+
+                <TextView
+                    android:id="@+id/label_line_spacing"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="1.4"
+                    android:textColor="@color/ink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp" />
+
+                <TextView
+                    android:id="@+id/btn_line_plus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="+"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+            </LinearLayout>
+
+            <!-- 段距 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="段距"
+                android:textColor="@color/ink"
+                android:textSize="@dimen/body_text_size"
+                android:layout_marginBottom="@dimen/spacing_sm" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="@dimen/spacing_lg">
+
+                <TextView
+                    android:id="@+id/btn_para_minus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="−"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+
+                <TextView
+                    android:id="@+id/label_para_spacing"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="1.6"
+                    android:textColor="@color/ink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp" />
+
+                <TextView
+                    android:id="@+id/btn_para_plus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="+"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+            </LinearLayout>
+
+            <!-- 左右边距 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="左右边距"
+                android:textColor="@color/ink"
+                android:textSize="@dimen/body_text_size"
+                android:layout_marginBottom="@dimen/spacing_sm" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="@dimen/spacing_sm">
+
+                <TextView
+                    android:id="@+id/btn_margin_minus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="−"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+
+                <TextView
+                    android:id="@+id/label_horizontal_margin"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="10"
+                    android:textColor="@color/ink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp" />
+
+                <TextView
+                    android:id="@+id/btn_margin_plus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="+"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+            </LinearLayout>
+
+            <!-- 首行缩进开关 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:paddingTop="@dimen/spacing_sm">
+
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="首行缩进"
+                    android:textColor="@color/ink"
+                    android:textSize="@dimen/body_text_size" />
+
+                <Switch
+                    android:id="@+id/switch_first_line_indent"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:checked="false" />
+            </LinearLayout>
         </LinearLayout>
 
-        <!-- 字体选择（固定高度：ScrollView 内不可用 weight，且字体可能很多） -->
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="字体" android:textColor="@android:color/black"
-        android:textSize="18sp" android:layout_marginBottom="8dp" />
-    <ListView android:id="@+id/font_list"
-        android:layout_width="match_parent" android:layout_height="240dp"
-        android:divider="@android:color/black"
-        android:dividerHeight="1dp" />
+        <!-- ══════════ 分组：阅读 ══════════ -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="阅读"
+            android:textColor="@color/ink_muted"
+            android:textSize="@dimen/caption_text_size"
+            android:textStyle="bold"
+            android:layout_marginLeft="@dimen/spacing_sm"
+            android:layout_marginBottom="@dimen/spacing_xs" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_card"
+            android:paddingLeft="@dimen/spacing_lg"
+            android:paddingRight="@dimen/spacing_lg"
+            android:paddingTop="@dimen/spacing_md"
+            android:paddingBottom="@dimen/spacing_md"
+            android:layout_marginBottom="@dimen/spacing_lg">
+
+            <!-- 文字对比度 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="文字对比度"
+                android:textColor="@color/ink"
+                android:textSize="@dimen/body_text_size"
+                android:layout_marginBottom="@dimen/spacing_sm" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="@dimen/spacing_lg">
+
+                <TextView
+                    android:id="@+id/btn_contrast_minus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="−"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+
+                <TextView
+                    android:id="@+id/label_text_contrast"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="100"
+                    android:textColor="@color/ink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp" />
+
+                <TextView
+                    android:id="@+id/btn_contrast_plus"
+                    android:layout_width="@dimen/chip_height"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="+"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="18sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+            </LinearLayout>
+
+            <!-- 字体微调（hinting） -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="字体微调 (Hinting)"
+                android:textColor="@color/ink"
+                android:textSize="@dimen/body_text_size"
+                android:layout_marginBottom="@dimen/spacing_sm" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="@dimen/spacing_lg">
+
+                <TextView
+                    android:id="@+id/label_hinting"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="关"
+                    android:textColor="@color/ink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp" />
+
+                <TextView
+                    android:id="@+id/btn_hinting_toggle"
+                    android:layout_width="80dp"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="切换"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+            </LinearLayout>
+
+            <!-- 翻页区域 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="翻页区域"
+                android:textColor="@color/ink"
+                android:textSize="@dimen/body_text_size"
+                android:layout_marginBottom="@dimen/spacing_sm" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="@dimen/spacing_lg">
+
+                <TextView
+                    android:id="@+id/label_tap_zone"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="默认(左30/中菜单/右30)"
+                    android:textColor="@color/ink"
+                    android:textSize="14sp"
+                    android:textStyle="bold"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp" />
+
+                <TextView
+                    android:id="@+id/btn_tap_zone_toggle"
+                    android:layout_width="80dp"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="切换"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+            </LinearLayout>
+
+            <!-- 全局粗体 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="全局粗体"
+                android:textColor="@color/ink"
+                android:textSize="@dimen/body_text_size"
+                android:layout_marginBottom="@dimen/spacing_sm" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="@dimen/spacing_sm">
+
+                <TextView
+                    android:id="@+id/label_bold_mode"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:gravity="center"
+                    android:text="关"
+                    android:textColor="@color/ink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:paddingLeft="10dp"
+                    android:paddingRight="10dp" />
+
+                <TextView
+                    android:id="@+id/btn_bold_toggle"
+                    android:layout_width="80dp"
+                    android:layout_height="@dimen/chip_height"
+                    android:text="切换"
+                    android:textColor="@color/btn_text_eink"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:gravity="center"
+                    android:background="@drawable/bg_button_eink"
+                    android:clickable="true" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- ══════════ 分组：字体 ══════════ -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="字体"
+            android:textColor="@color/ink_muted"
+            android:textSize="@dimen/caption_text_size"
+            android:textStyle="bold"
+            android:layout_marginLeft="@dimen/spacing_sm"
+            android:layout_marginBottom="@dimen/spacing_xs" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="@drawable/bg_card"
+            android:paddingLeft="@dimen/spacing_lg"
+            android:paddingRight="@dimen/spacing_lg"
+            android:paddingTop="@dimen/spacing_md"
+            android:paddingBottom="@dimen/spacing_md">
+
+            <!-- 字体选择（固定高度：ScrollView 内不可用 weight，且字体可能很多） -->
+            <ListView
+                android:id="@+id/font_list"
+                android:layout_width="match_parent"
+                android:layout_height="240dp"
+                android:divider="@color/divider"
+                android:dividerHeight="1dp"
+                android:listSelector="@android:color/transparent" />
+        </LinearLayout>
 
     </LinearLayout>
 

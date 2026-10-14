@@ -6,10 +6,11 @@ import org.junit.Test
 class FeatureFlagsTest {
 
     @Test
-    fun eNUMERABLE_RUST_defined() {
-        // ENABLE_RUST 编译时常量，由 BuildConfig 提供
-        // 在测试中 BuildConfig.ENABLE_RUST 默认为 false（因为未设置 enableRust）
-        assertThat(FeatureFlags.ENABLE_RUST).isFalse()
+    fun enableRust_defaultIsTrue() {
+        // ENABLE_RUST 编译时常量，由 BuildConfig 提供。
+        // build.gradle 中未传 -PenableRust 时默认 true（Rust 核心是主打功能，默认开启），
+        // 因此 debug 构建的 BuildConfig.ENABLE_RUST 恒为 true。
+        assertThat(FeatureFlags.ENABLE_RUST).isTrue()
     }
 
     @Test

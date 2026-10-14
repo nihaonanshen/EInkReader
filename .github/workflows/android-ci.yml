@@ -35,6 +35,17 @@ jobs:
       - name: Run unit tests
         run: ./gradlew testDebugUnitTest
 
+      - name: Jacoco coverage report + gate
+        # 门禁阈值与基线见 app/build.gradle jacocoCoverageVerification（棘轮：只升不降）
+        run: ./gradlew jacocoTestReport jacocoCoverageVerification
+
+      - name: Upload Jacoco coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-coverage
+          path: app/build/reports/jacoco/jacocoTestReport/
+
       - name: Build APK (debug)
         run: ./gradlew assembleDebug
 
@@ -60,3 +71,11 @@ jobs:
 
       - name: Run Rust tests
         run: cd rust/einkreader-core && cargo test
+
+      - name: Audit dependencies for known vulnerabilities
+        # cargo-audit（官方 rustsec action，自动安装并拉取 RUSTSEC 顾问库）
+        # 检查 Cargo.lock 锁定版本中的已知 CVE/弃用 crate
+        uses: rustsec/audit-action@v4
+        with:
+          working-directory: rust/einkreader-core
+          token: ${{ secrets.GITHUB_TOKEN }}

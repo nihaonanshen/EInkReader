@@ -20,6 +20,12 @@ class Chapter @JvmOverloads constructor(
 
     var index: Int = 0
 
+    /**
+     * 懒加载是否已尝试过（防止空章节触发无限重复加载）
+     */
+    @Volatile
+    var lazyLoadAttempted: Boolean = false
+
     fun addImagePath(path: String) { imagePaths.add(path) }
     fun addParagraphType(type: Int) { paragraphTypes.add(type) }
     fun setImagePaths(paths: List<String>) { imagePaths.clear(); imagePaths.addAll(paths) }

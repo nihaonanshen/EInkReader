@@ -30,6 +30,9 @@ app/src/main/jniLibs/**/*.so
 .scratch/
 .gradle-cache/
 epub 测试/
+# 会话探测残留（REASONIX P1-1：数据文件与探测产物严禁入库）
+.probe/
+*.db
 
 # 日志文件
 *.log

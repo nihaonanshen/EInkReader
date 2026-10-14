@@ -99,9 +99,9 @@ app/src/main/java/com/einkreader/
 │   │   ├── LibraryActivity.kt        # 书库首页
 │   │   └── BookListAdapter.kt        # 书籍列表适配器
 │   ├── reader/
-│   │   ├── ReaderActivity.kt         # 阅读界面（Tab 菜单 / 书签 / 全刷）
+│   │   ├── ReaderActivity.kt         # 阅读界面（Tab 菜单 / 书签 / 全刷 / 内嵌目录）
 │   │   ├── ReaderView.kt             # 自定义渲染 View（防抖翻页 / 全刷）
-│   │   ├── TocActivity.kt            # 独立目录页
+│   │   ├── TocActivity.kt            # 独立目录页（保留类；P2-11 已移除 Manifest 注册与 sSelectedChapter 死链，未启用）
 │   │   ├── ReadingSettingsActivity.kt # 阅读设置（A-/A+ 字号快捷）
 │   │   └── DebugLog.kt               # 调试日志
 │   └── settings/

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- ══════════════ 设计令牌 · 统一间距 ══════════════ -->
+    <dimen name="spacing_xs">4dp</dimen>
+    <dimen name="spacing_sm">8dp</dimen>
+    <dimen name="spacing_md">12dp</dimen>
+    <dimen name="spacing_lg">16dp</dimen>
+    <dimen name="spacing_xl">20dp</dimen>
+    <dimen name="spacing_xxl">24dp</dimen>
+    <dimen name="spacing_xxxl">32dp</dimen>
+
+    <!-- ══════════════ 设计令牌 · 圆角 ══════════════ -->
+    <dimen name="radius_sm">2dp</dimen>
+    <dimen name="radius_md">4dp</dimen>
+    <dimen name="radius_lg">8dp</dimen>
+    <dimen name="card_radius">6dp</dimen>
+
+    <!-- ══════════════ 设计令牌 · 栏高/组件 ══════════════ -->
+    <dimen name="top_bar_height">56dp</dimen>
+    <dimen name="bottom_bar_height">64dp</dimen>
+    <dimen name="cover_width">72dp</dimen>
+    <dimen name="cover_height">96dp</dimen>
+    <dimen name="icon_size">24dp</dimen>
+    <dimen name="chip_height">48dp</dimen>
+
+    <!-- ══════════════ 设计令牌 · 字号 ══════════════ -->
+    <dimen name="title_text_size">22sp</dimen>
+    <dimen name="heading_text_size">19sp</dimen>
+    <dimen name="body_text_size">17sp</dimen>
+    <dimen name="caption_text_size">13sp</dimen>
+    <dimen name="micro_text_size">12sp</dimen>
+</resources>

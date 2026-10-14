@@ -2,6 +2,7 @@ package com.einkreader.core
 
 import android.util.Base64
 import android.util.Log
+import com.einkreader.core.Constants
 import com.einkreader.core.model.Chapter
 import com.einkreader.core.model.EpubResult
 import com.einkreader.core.model.TocItem
@@ -109,8 +110,9 @@ class NativeBridge {
     private val lruCache: MutableMap<LayoutKey, LayoutResult> =
         object : LinkedHashMap<LayoutKey, LayoutResult>(4, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<LayoutKey, LayoutResult>?): Boolean {
-                // ✅ [Phase 3] 从 3 增大到 20，减少翻页 cache miss
-                return size > 20
+                // ✅ [P2-3 2026-10-15] 容量收敛到 Constants.LAYOUT_CACHE_ENTRIES（原硬编码 20）：
+                // 每条 LayoutResult 含整章全部页 LineMetric，小内存设备按页数窗口收敛
+                return size > Constants.LAYOUT_CACHE_ENTRIES
             }
         }
 
@@ -215,7 +217,14 @@ class NativeBridge {
         if (!sLibraryLoaded) {
             throw IllegalStateException("Rust core library not available")
         }
-        return nativeLoadEpubChapterContent(filePath, chapterXhtmlPath)
+        return try {
+            val result = nativeLoadEpubChapterContent(filePath, chapterXhtmlPath)
+            Log.d(TAG, "loadEpubChapterContent: path=$chapterXhtmlPath, resultLen=${result.length}")
+            result
+        } catch (e: Exception) {
+            Log.e(TAG, "loadEpubChapterContent failed for $chapterXhtmlPath: ${e.message}", e)
+            throw e
+        }
     }
 
     // 🔥 批量布局（JSON版）— texts: JSON array of strings, params: JSON object

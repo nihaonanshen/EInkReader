@@ -44,6 +44,8 @@ class ReaderView : View {
     @Volatile
     private var fgColor = Color.BLACK
     private var mutedColor = -0x666667
+    /** 正文文字黑度（0-100，100=纯黑；低值=灰色文字，E-ink 更柔和） */
+    private var textBlackLevel = 100
     private var paddingLeft = 20
     private var paddingRight = 20
     private var paddingTop = 16
@@ -77,6 +79,9 @@ class ReaderView : View {
 
     // ==================== E Ink 刷新管理 ====================
     private var refreshManager: EinkRefreshManager? = null
+    // 待执行的 EPDC 刷新（onDraw 绘制完成后消费）
+    private var pendingRefreshMode: EinkRefreshManager.RefreshMode? = null
+    private var pendingRefreshArea: android.graphics.Rect? = null
 
     // ==================== 绘图工具 ====================
     private var textPaint: Paint? = null
@@ -101,7 +106,9 @@ class ReaderView : View {
         var x: Float,
         var y: Float,
         var fontSize: Float,
-        var bold: Boolean
+        var bold: Boolean,
+        /** 两端对齐目标行宽（0=不 justify；绘制时按实际字体测量计算间距） */
+        var justifyWidth: Float = 0f
     )
 
     internal class ImageBlock {
@@ -128,6 +135,8 @@ class ReaderView : View {
         fun onTapCenter()
         fun onNeedPrevChapter()
         fun onNeedNextChapter()
+        /** 双指缩放：delta=1 放大，-1 缩小 */
+        fun onPinchZoom(delta: Int) {}
     }
 
     // ==================== 构造 ====================
@@ -160,6 +169,9 @@ class ReaderView : View {
         textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
         textPaint!!.setColor(fgColor)
         textPaint!!.setTypeface(typeface)
+        // ★ E-ink 文字渲染优化：关闭原生 hinting（灰度渲染下 hinting 会强制像素对齐，
+        //   低分辨率 E-ink 上可能造成字形边缘生硬；KOReader 默认 light/none）
+        textPaint!!.setHinting(Paint.HINTING_OFF)
         textPaint!!.setTextAlign(Paint.Align.LEFT)
 
         imageBgPaint = Paint()
@@ -179,8 +191,10 @@ class ReaderView : View {
 
     // ==================== 智能刷新（E Ink 模式选择） ====================
     /**
-     * 根据翻页方向和缓存命中状态，通知 EinkRefreshManager 执行智能刷新
-     * 
+     * 根据翻页方向和缓存命中状态，计算刷新模式并安排在绘制完成后执行。
+     * ★ 关键：EPDC 硬件刷新必须在 onDraw（framebuffer 更新）之后执行，
+     *   否则刷出来的是旧帧（导致"点击多次才显示下一页"）。
+     *
      * @param isForward true=向前翻页, false=向后翻页
      */
     private fun triggerSmartRefresh(isForward: Boolean) {
@@ -190,6 +204,16 @@ class ReaderView : View {
         }
         val area = Rect()
         getDrawingRect(area)
+        // ★ 局部刷新区域：限定在正文内容区（顶部让开状态栏、底部让开页码区），
+        //   翻页时驱动只刷新该矩形，避免整屏闪烁；GC16 全刷时忽略此区域。
+        val refreshPadTop = paddingTop + 60
+        val refreshPadBottom = 80
+        area.top = (area.top + refreshPadTop).coerceAtMost(area.bottom - 100)
+        area.bottom = (area.bottom - refreshPadBottom).coerceAtLeast(area.top + 100)
+        area.left += paddingLeft
+        area.right -= paddingRight
+        if (area.right <= area.left) area.right = area.left + 1
+        if (area.bottom <= area.top) area.bottom = area.top + 1
         var cacheHit = false
         if (currentChapter != null && currentChapter!!.content != null) {
             try {
@@ -209,7 +233,31 @@ class ReaderView : View {
                 cacheHit = false
             }
         }
-        refreshManager!!.requestSmartRefresh(this, area, isForward, cacheHit)
+        pendingRefreshArea = area
+        pendingRefreshMode = refreshManager!!.computeRefreshMode(isForward, cacheHit)
+        // 触发重绘：onDraw 完成后在 ReaderView 内部调用 performEpdcRefresh
+        // ★ 刷新合帧：单次翻页立即刷新；0.3s 内快速连续翻页合并为一次刷新（显示最终页）
+        requestRender()
+    }
+
+    // ★ 刷新合帧（借鉴 KOReader postInvalidateDelayed 思路）：
+    //   快速连续翻页时合并 EPDC 刷新，减少刷新次数/残影/功耗。
+    //   单次操作立即刷新（无迟滞感），连续操作推迟到停顿后统一刷新。
+    private var lastRenderRequestTime = 0L
+    private val RENDER_COALESCE_MS = 500L
+    private val coalescedRenderRunnable = Runnable { invalidate() }
+
+    private fun requestRender() {
+        val now = System.currentTimeMillis()
+        if (lastRenderRequestTime > 0 && now - lastRenderRequestTime < RENDER_COALESCE_MS) {
+            // 快速连续操作：合并刷新，推迟到停顿后显示最终页
+            removeCallbacks(coalescedRenderRunnable)
+            postDelayed(coalescedRenderRunnable, RENDER_COALESCE_MS)
+        } else {
+            // 单次操作：立即刷新
+            invalidate()
+        }
+        lastRenderRequestTime = now
     }
 
     // ==================== 公开设置方法 ====================
@@ -223,6 +271,29 @@ class ReaderView : View {
         if (this.lineSpacing == spacing) return
         this.lineSpacing = spacing
         applySettings()
+    }
+
+    /**
+     * 设置正文文字黑度（0-100，100=纯黑）。
+     * 低对比度（灰色文字）在 E-ink 上更柔和（KOReader font_gamma 思路）。
+     * 只改颜色不重排版：清页 Bitmap 缓存后重绘。
+     */
+    fun setTextContrast(blackLevel: Int) {
+        val v = blackLevel.coerceIn(0, 100)
+        if (v == this.textBlackLevel) return
+        this.textBlackLevel = v
+        // gray = 255 - 黑度比例，clamp 到 [30,255]（0=纯黑，避免调到纯白）
+        val g = (255 - v * 255 / 100).coerceIn(30, 255)
+        fgColor = Color.rgb(g, g, g)
+        textPaint!!.setColor(fgColor)
+        clearPageBitmapCache()
+        invalidate()
+    }
+
+    /** 字体 hinting 开关（E-ink 灰度渲染下建议关闭） */
+    fun setFontHinting(enabled: Boolean) {
+        textPaint!!.setHinting(if (enabled) Paint.HINTING_ON else Paint.HINTING_OFF)
+        invalidate()
     }
 
     fun setParagraphSpacing(spacing: Float) {
@@ -298,6 +369,10 @@ class ReaderView : View {
     fun setChapter(chapter: Chapter?) {
         this.currentChapter = chapter
         this.currentPage = 0
+        // ★ 立即清空旧章节页面，避免布局完成前 onDraw 显示上一章内容
+        //   （翻章时先显示旧章第一页、再刷新成新章第一页的 bug）
+        pages.clear()
+        totalPages = 0
         for (bmp in bitmapCache!!.snapshot().values) {
             if (bmp != null && !bmp.isRecycled()) bmp.recycle()
         }
@@ -331,6 +406,8 @@ class ReaderView : View {
 
         // ------------------------------------
         layoutVersion++
+        // ★ 布局重新开始（章节切换/字号/段距等变化）：页 Bitmap 缓存全部失效
+        clearPageBitmapCache()
         val version = layoutVersion
         backgroundHandler!!.removeCallbacksAndMessages(null)
         backgroundHandler!!.post(object : Runnable {
@@ -484,8 +561,9 @@ class ReaderView : View {
                                 }
                             }
                             if (found >= 0) currentPage = found
-                            else if (currentPage >= totalPages) currentPage = max(0, totalPages - 1)
                         }
+                        // ★ 越界兜底：currentPage 超过新章节页数时重置到章末
+                        if (currentPage >= totalPages) currentPage = max(0, totalPages - 1)
                         decodeCurrentPageImages()
                         invalidate()
                         notifyPageChanged()
@@ -520,6 +598,10 @@ class ReaderView : View {
         val resultPages: MutableList<Page?> = ArrayList<Page?>()
         var curPd = Page()
         var y = padT.toFloat()
+        // ✅ [P2-4 2026-10-15] content 中图片标记集合在循环外只算一次（惰性：
+        //   原实现在每个图片块里重复 content.lines() 全量扫描 → O(图片数×行数)；
+        //   结果仅用于 debug 日志，首次进入图片块时算一次，之后复用同一集合）
+        var imageMarkers: Set<String>? = null
 
         for (pi in paragraphs.indices) {
             val para = paragraphs[pi]
@@ -569,9 +651,10 @@ class ReaderView : View {
             if (trimmed.startsWith("[[IMAGE:") && trimmed.endsWith("]]")) {
                 val imgPath = trimmed.substring(8, trimmed.length - 2).trim { it <= ' ' }
                 log("Image", "找到图片标记: $imgPath, images.size=${images?.size}, chapterImages=${chapterImages != null}")
-                // 打印 content 中的图片标记
-                val imageMarkers = content.lines().filter { it.startsWith("[[IMAGE:") }.map { it.substringBefore("]]") + "]]" }.toSet()
-                log("Image", "content 中的图片标记: $imageMarkers")
+                // 打印 content 中的图片标记（循环外预计算，首图命中时 O(n) 扫描一次，之后复用）
+                val markers = imageMarkers ?: content.lines().filter { it.startsWith("[[IMAGE:") }
+                    .map { it.substringBefore("]]") + "]]" }.toSet().also { imageMarkers = it }
+                log("Image", "content 中的图片标记: $markers")
                 var imgW = contentWidth
                 var imgH = contentHeight / 2
                 // 检查图片原始宽高比（从字节数据解码后缩放）
@@ -638,7 +721,7 @@ class ReaderView : View {
             if (hasIndent && !centered) {
                 val indentPx = firstIndent.toInt()
                 if (indentPx < actCW - Constants.MIN_INDENT_AVAILABLE_WIDTH_PX) {
-                    val firstOnly = wrapText(trimmed, actCW - indentPx, bp)
+                    val firstOnly = TextWrapper.wrap(trimmed, actCW - indentPx, bp)
                     if (!firstOnly.isEmpty()) {
                         val firstLine = firstOnly.get(0)
                         if (firstLine.length < trimmed.length) {
@@ -654,7 +737,7 @@ class ReaderView : View {
                         curPd.lines.add(
                             TextLine(
                                 firstLine, actPL + indentPx,
-                                y + ceil(-bpFm.ascent.toDouble()).toFloat(), paraTS, bold
+                                y + ceil(-fm.ascent.toDouble()).toFloat(), paraTS, bold
                             )
                         )
                         y += lineH
@@ -663,7 +746,7 @@ class ReaderView : View {
             }
 
             if (!remaining.isEmpty()) {
-                val wrappedLines = wrapText(remaining, actCW, bp)
+                val wrappedLines = TextWrapper.wrap(remaining, actCW, bp)
                 for (li in wrappedLines.indices) {
                     val line = wrappedLines.get(li)
                     if (y + lineH > padT + contentHeight) {
@@ -676,10 +759,19 @@ class ReaderView : View {
                         val lw = bp.measureText(line)
                         x = (viewWidth - lw) / 2f
                     }
+                    // ★ 两端对齐（KOReader 借鉴）：非段末行、非居中时，
+                    //   记录目标行宽，绘制时按实际字体测量计算字间距（右侧对齐）
+                    var justifyW = 0f
+                    if (!centered && li < wrappedLines.size - 1 && line.length > 1) {
+                        val lineW = bp.measureText(line)
+                        if (lineW < actCW - 1) {
+                            justifyW = actCW.toFloat()
+                        }
+                    }
                     curPd.lines.add(
                         TextLine(
                             line, x,
-                            y + ceil(-bpFm.ascent.toDouble()).toFloat(), paraTS, bold
+                            y + ceil(-fm.ascent.toDouble()).toFloat(), paraTS, bold, justifyW
                         )
                     )
                     y += lineH
@@ -726,9 +818,14 @@ class ReaderView : View {
                     }
                     if (found >= 0) {
                         currentPage = found
-                    } else if (currentPage >= totalPages) {
-                        currentPage = max(0, totalPages - 1)
                     }
+                }
+
+                // ★ 越界兜底：currentPage 超过新章节页数时重置到章末
+                //   （修复：切上一章时 goToPage(旧 totalPages-1) 立即执行，
+                //    导致 currentPage 残留旧页码越界，onDraw 显示"排版中"）
+                if (currentPage >= totalPages) {
+                    currentPage = max(0, totalPages - 1)
                 }
 
                 // ★ 图片解码已移至翻页方法，但首次布局后仍需解码第一页
@@ -739,86 +836,25 @@ class ReaderView : View {
         })
     }
 
-    private fun mcw(c: Char, p: Paint): Float {
-        val buf = charArrayOf(c)
-        return p.measureText(buf, 0, 1)
-    }
-
-    private fun msw(s: String?, p: Paint): Float {
-        if (s == null || s.isEmpty()) return 0f
-        return p.measureText(s)
-    }
-
-    private fun wrapText(text: String?, maxW: Int, p: Paint): MutableList<String> {
-        val lines: MutableList<String> = ArrayList<String>()
-        if (text == null || text.isEmpty()) {
-            lines.add("")
-            return lines
-        }
-
-        var isCjk = false
-        for (i in 0..<text.length) {
-            val c = text.get(i)
-            if ((c.code >= 0x4E00 && c.code <= 0x9FFF) || (c.code >= 0x3400 && c.code <= 0x4DBF) || (c.code >= 0x3040 && c.code <= 0x30FF)) {
-                isCjk = true
-                break
-            } else if (Character.isLetterOrDigit(c)) {
-                break
-            }
-        }
-
-        val cl = StringBuilder()
-        if (!isCjk) {
-            val words = text.split(" ".toRegex()).toTypedArray()
-            for (word in words) {
-                val ww = msw(word, p)
-                if (ww + TEXT_SAFETY_MARGIN > maxW) {
-                    if (cl.length > 0) {
-                        lines.add(cl.toString())
-                        cl.setLength(0)
-                    }
-                    for (ci in 0..<word.length) {
-                        val c = word.get(ci)
-                        cl.append(c)
-                        if (msw(cl.toString(), p) + TEXT_SAFETY_MARGIN > maxW && cl.length > 1) {
-                            cl.deleteCharAt(cl.length - 1)
-                            lines.add(cl.toString())
-                            cl.setLength(0)
-                            cl.append(c)
-                        }
-                    }
-                    continue
-                }
-                val tryL: String? = if (cl.length > 0) cl.toString() + " " + word else word
-                if (msw(tryL, p) + TEXT_SAFETY_MARGIN > maxW && cl.length > 0) {
-                    lines.add(cl.toString())
-                    cl.setLength(0)
-                    cl.append(word)
-                } else {
-                    cl.setLength(0)
-                    cl.append(tryL)
-                }
-            }
-        } else {
-            var cw = 0f
-            for (i in 0..<text.length) {
-                val c = text.get(i)
-                val cw1 = mcw(c, p)
-                if (cw + cw1 + TEXT_SAFETY_MARGIN > maxW && cl.length > 0) {
-                    lines.add(cl.toString())
-                    cl.setLength(0)
-                    cw = 0f
-                }
-                cl.append(c)
-                cw += cw1
-            }
-        }
-        if (cl.length > 0) lines.add(cl.toString())
-        if (lines.isEmpty()) lines.add("")
-        return lines
-    }
+    // 换行引擎（mcw/msw/wrapText/isForbiddenLineStart）已抽到 TextWrapper（纯函数，可单测）
 
     // ==================== 绘图 ====================
+
+    // ★ 页 Bitmap 缓存（已抽到 PageBitmapCache）：翻页从 ~30 次 drawText（i.MX6 软渲染慢）
+    //   降为 1 次 drawBitmap；按页数 LRU（默认 3 页，RGB_565 每页约 5.2MB）
+    private val pageBitmapCache = PageBitmapCache()
+
+    private fun getPageBitmap(idx: Int): Bitmap? = pageBitmapCache.get(idx)
+
+    private fun cachePageBitmap(idx: Int, bmp: Bitmap) {
+        pageBitmapCache.put(idx, bmp)
+    }
+
+    /** 章节切换/设置变化（layoutVersion 递增）时清空页缓存并回收位图 */
+    private fun clearPageBitmapCache() {
+        pageBitmapCache.clearAndRecycle()
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         canvas.drawColor(bgColor)
@@ -841,33 +877,153 @@ class ReaderView : View {
             return
         }
 
-        val page = pages.get(currentPage)
+        // ★ 页 Bitmap 缓存：首次渲染成位图并缓存，后续直接 drawBitmap
+        var bmp = getPageBitmap(currentPage)
+        if (bmp == null) {
+            bmp = try {
+                val b = Bitmap.createBitmap(getWidth(), getHeight(), Bitmap.Config.RGB_565)
+                val c = Canvas(b)
+                c.drawColor(bgColor)
+                drawPageDirect(c, pages.get(currentPage))
+                b
+            } catch (e: OutOfMemoryError) {
+                null   // 内存不足：回退直接绘制
+            }
+            if (bmp != null) {
+                cachePageBitmap(currentPage, bmp)
+            }
+        }
+        if (bmp != null) {
+            canvas.drawBitmap(bmp, 0f, 0f, null)
+        } else {
+            drawPageDirect(canvas, pages.get(currentPage))
+        }
+
+        // ★ EPDC 硬件刷新：必须在绘制完成（framebuffer 已更新）后执行，
+        //   否则驱动刷新的是旧帧（导致"点击多次才显示下一页"）
+        val refreshMode = pendingRefreshMode
+        if (refreshMode != null && refreshManager != null) {
+            pendingRefreshMode = null
+            val area = pendingRefreshArea ?: Rect()
+            pendingRefreshArea = null
+            refreshManager!!.performEpdcRefresh(this, area, refreshMode)
+        }
+    }
+
+    /** 直接绘制一页内容（文字/图片/页码）到指定 canvas（Bitmap 渲染与兜底共用） */
+    private fun drawPageDirect(c: Canvas, page: Page) {
         textPaint!!.setColor(fgColor)
         textPaint!!.setTypeface(typeface)
         for (line in page.lines) {
             textPaint!!.setTextSize(line.fontSize * density)
-            textPaint!!.setFakeBoldText(line.bold)
-            canvas.drawText(line.text, line.x, line.y, textPaint!!)
+            textPaint!!.setFakeBoldText(line.bold || boldMode)
+            if (line.justifyWidth > 0f && line.text.length > 1) {
+                // 两端对齐：按实际字体测量整行宽，计算每字间距后逐字绘制
+                val t = line.text
+                val totalW = textPaint!!.measureText(t)
+                val step = if (totalW < line.justifyWidth) {
+                    (line.justifyWidth - totalW) / (t.length - 1)
+                } else 0f
+                if (step == 0f) {
+                    // 无需加间距：整行一次 drawText（省去逐字 drawText）
+                    c.drawText(t, line.x, line.y, textPaint!!)
+                } else {
+                    // ★ 逐字符宽度用 getTextWidths 一次批量取（单次调用），
+                    //   替代原先 n 次 measureText(ch.toString()) + n 次 O(n) toString 分配
+                    //   （i.MX6 软渲染下逐字测量是两端对齐行的大热点）
+                    val widths = FloatArray(t.length)
+                    textPaint!!.getTextWidths(t, 0, t.length, widths)
+                    var cx = line.x
+                    for (i in 0 until t.length) {
+                        c.drawText(t[i].toString(), cx, line.y, textPaint!!)
+                        cx += widths[i] + step
+                    }
+                }
+            } else {
+                c.drawText(line.text, line.x, line.y, textPaint!!)
+            }
         }
 
         for (img in page.images) {
             if (img.bitmap != null && !img.bitmap!!.isRecycled()) {
-                canvas.drawRect(img.rect!!, imageBgPaint!!)
-                canvas.drawBitmap(img.bitmap!!, null, img.rect!!, null)
+                c.drawRect(img.rect!!, imageBgPaint!!)
+                c.drawBitmap(img.bitmap!!, null, img.rect!!, null)
             } else if (img.rect != null) {
-                canvas.drawRect(img.rect!!, imageBgPaint!!)
+                c.drawRect(img.rect!!, imageBgPaint!!)
             }
         }
 
         if (totalPages > 0) {
             pageNumPaint!!.setColor(mutedColor)
-            canvas.drawText(
-                (currentPage + 1).toString() + " / " + totalPages,
+            val pageTxt = (currentPage + 1).toString() + " / " + totalPages
+            c.drawText(
+                pageTxt,
                 getWidth() / 2f,
                 (getHeight() - 10).toFloat(),
                 pageNumPaint!!
             )
+            // ★ 底部阅读进度（KOReader footer 借鉴）：全书百分比
+            if (bookProgressPercent >= 0) {
+                c.drawText(
+                    "全书 " + bookProgressPercent + "%",
+                    getWidth() / 2f,
+                    (getHeight() - 30).toFloat(),
+                    pageNumPaint!!
+                )
+            }
         }
+    }
+
+    /** 全书阅读进度（百分比，-1=不显示；由 ReaderActivity 传入） */
+    @Volatile
+    private var bookProgressPercent = -1
+
+    /** 全局伪粗体模式：所有文字 fake bold（E-ink 对比度增强；软件渲染下比真实字重快） */
+    @Volatile
+    private var boldMode = false
+
+    fun setBoldMode(enabled: Boolean) {
+        if (boldMode == enabled) return
+        boldMode = enabled
+        clearPageBitmapCache()
+        invalidate()
+    }
+
+    fun setBookProgress(percent: Int) {
+        bookProgressPercent = percent
+        // 进度变化只影响底部文本：清页缓存重绘（无需重排版）
+        clearPageBitmapCache()
+        invalidate()
+    }
+
+    /**
+     * 两步解码：按目标尺寸一步解码到位（inSampleSize 降采样 + RGB_565 省半内存），
+     * 避免"原尺寸全图解码 + createScaledBitmap"的中间大 Bitmap。
+     * @return 目标尺寸 (targetW×targetH) 的 RGB_565 位图；解码失败返回 null
+     */
+    private fun decodeScaledBitmap(data: ByteArray, targetW: Int, targetH: Int): Bitmap? {
+        if (targetW <= 0 || targetH <= 0) return null
+        // 第一步：只取原图尺寸，不分配像素
+        val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(data, 0, data.size, boundsOpts)
+        val ow = boundsOpts.outWidth
+        val oh = boundsOpts.outHeight
+        if (ow <= 0 || oh <= 0) return null
+        // 降采样倍数（2 的幂，Android 要求）：原图 > 目标时按比例降，避免分配超过需要的像素
+        var sample = 1
+        while (ow / (sample * 2) >= targetW && oh / (sample * 2) >= targetH) {
+            sample *= 2
+        }
+        // 第二步：解码到降采样尺寸（若已比目标小则用目标尺寸，让 BitmapFactory 直接给近似大小）
+        val decodeOpts = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = Bitmap.Config.RGB_565 // 墨水屏无色彩需求，省一半内存
+        }
+        val decoded = BitmapFactory.decodeByteArray(data, 0, data.size, decodeOpts) ?: return null
+        if (decoded.width == targetW && decoded.height == targetH) return decoded
+        val scaled = Bitmap.createScaledBitmap(decoded, targetW, targetH, true)
+        if (scaled != decoded) decoded.recycle()
+        return scaled
     }
 
     // ==================== 尺寸变化 ====================
@@ -905,6 +1061,9 @@ class ReaderView : View {
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
         layoutVersion = Int.MAX_VALUE
+        // 释放页 Bitmap 缓存，避免 Activity 销毁后泄漏
+        clearPageBitmapCache()
+        removeCallbacks(coalescedRenderRunnable)
         if (layoutThread != null) {
             layoutThread!!.quitSafely()
             layoutThread = null
@@ -914,14 +1073,15 @@ class ReaderView : View {
 
     // ==================== 触摸翻页 ====================
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        // ★ 双指缩放（pinch）：改变字号（KOReader 借鉴）
+        if (event.getPointerCount() >= 2) {
+            handlePinch(event)
+            return true
+        }
         val x = event.getX()
         val y = event.getY()
         val width = getWidth().toFloat()
-        var zone: Int = ZONE_MENU
-        if (width > 0) {
-            if (x < width * 0.3f) zone = ZONE_PREV
-            else if (x > width * 0.7f) zone = ZONE_NEXT
-        }
+        var zone: Int = calcTapZone(x, width)
         when (event.getAction()) {
             MotionEvent.ACTION_DOWN -> {
                 downX = x
@@ -933,7 +1093,19 @@ class ReaderView : View {
             MotionEvent.ACTION_MOVE -> return true
             MotionEvent.ACTION_CANCEL -> return true
             MotionEvent.ACTION_UP -> {
-                if (abs(x - downX) > 25f || abs(y - downY) > 25f) return true
+                val dx = x - downX
+                val dy = y - downY
+                // ★ 滑动手势翻页（KOReader 借鉴）：水平滑动超过阈值触发翻页
+                if (abs(dx) > SWIPE_THRESHOLD_PX && abs(dy) < SWIPE_VERTICAL_LIMIT_PX) {
+                    val now = System.currentTimeMillis()
+                    if (dx < 0) {
+                        if (tryConsume(now)) nextPage()
+                    } else {
+                        if (tryConsume(now)) prevPage()
+                    }
+                    return true
+                }
+                if (abs(dx) > 25f || abs(dy) > 25f) return true
                 val uz = if (width > 0) zone else lastZone
                 val now = System.currentTimeMillis()
                 when (uz) {
@@ -948,6 +1120,49 @@ class ReaderView : View {
         return true
     }
 
+    // ★ 翻页触摸区域可配置（KOReader page_turns_tap_zones 借鉴）
+    //   tapZoneMode：0=默认(左30翻页/中央菜单/右30翻页)，1=左右50/50全翻页，2=全屏翻下一页
+    private var tapZoneMode = 0
+
+    fun setTapZoneMode(mode: Int) {
+        tapZoneMode = mode.coerceIn(0, 2)
+    }
+
+    private fun calcTapZone(x: Float, width: Float): Int {
+        if (width <= 0f) return ZONE_MENU
+        return when (tapZoneMode) {
+            1 -> if (x < width * 0.5f) ZONE_PREV else ZONE_NEXT
+            2 -> ZONE_NEXT
+            else -> {
+                if (x < width * 0.3f) ZONE_PREV
+                else if (x > width * 0.7f) ZONE_NEXT
+                else ZONE_MENU
+            }
+        }
+    }
+
+    // ★ 双指缩放字号
+    private var lastPinchDist = 0f
+    private val PINCH_THRESHOLD = 30f
+
+    private fun handlePinch(event: MotionEvent) {
+        val action = event.getActionMasked()
+        if (action == MotionEvent.ACTION_POINTER_DOWN || action == MotionEvent.ACTION_MOVE) {
+            if (event.getPointerCount() >= 2) {
+                val dx = event.getX(0) - event.getX(1)
+                val dy = event.getY(0) - event.getY(1)
+                val dist = Math.sqrt((dx * dx + dy * dy).toDouble()).toFloat()
+                if (lastPinchDist > 0 && abs(dist - lastPinchDist) > PINCH_THRESHOLD) {
+                    val delta = if (dist > lastPinchDist) 1 else -1
+                    pageChangeListener?.onPinchZoom(delta)
+                }
+                lastPinchDist = dist
+            }
+        } else if (action == MotionEvent.ACTION_POINTER_UP || action == MotionEvent.ACTION_UP) {
+            lastPinchDist = 0f
+        }
+    }
+
     private fun tryConsume(now: Long): Boolean {
         if (now - lastPageChangeTime < PAGE_DEBOUNCE_MS) return false
         lastPageChangeTime = now
@@ -955,10 +1170,18 @@ class ReaderView : View {
     }
 
     // ==================== 翻页 ====================
+    /**
+     * 菜单开着时翻页拦截器（由 ReaderActivity 注入）：
+     * 返回 true 表示本次翻页被拦截——先收起菜单，不翻页（用户 R6 需求：菜单开着时
+     * 第一次翻页请求只缩回菜单，第二次才真正翻页）。
+     */
+    var menuTurnInterceptor: (() -> Boolean)? = null
+
     fun prevPage(): Boolean {
+        if (menuTurnInterceptor?.invoke() == true) return false
         if (currentPage > 0) {
             currentPage--
-            triggerSmartRefresh(true)
+            triggerSmartRefresh(false)
             notifyPageChanged()
             decodeCurrentPageImages()
             return true
@@ -968,9 +1191,10 @@ class ReaderView : View {
     }
 
     fun nextPage(): Boolean {
+        if (menuTurnInterceptor?.invoke() == true) return false
         if (currentPage < totalPages - 1) {
             currentPage++
-            triggerSmartRefresh(false)
+            triggerSmartRefresh(true)
             notifyPageChanged()
             decodeCurrentPageImages()
             return true
@@ -1009,8 +1233,20 @@ class ReaderView : View {
     }
 
     fun performFullRefresh() {
-        if (getParent() is View) (getParent() as View).postInvalidate()
-        invalidate()
+        // ★ 真全刷：走 refreshManager 的 GC16 路径（sysfs 全屏刷新，清残影）。
+        //   旧实现只 invalidate，系统自动刷新用局部波形、清不掉残影（用户反馈"手动刷新不起效"）。
+        val rm = refreshManager
+        if (rm != null) {
+            val area = Rect()
+            getDrawingRect(area)
+            if (area.width() <= 0 || area.height() <= 0) {
+                area.set(0, 0, getWidth(), getHeight())
+            }
+            rm.performEpdcRefresh(this, area, EinkRefreshManager.RefreshMode.GC16_FULL)
+        } else {
+            if (getParent() is View) (getParent() as View).postInvalidate()
+            invalidate()
+        }
     }
 
     fun setOnPageChangeListener(l: OnPageChangeListener?) {
@@ -1018,11 +1254,27 @@ class ReaderView : View {
     }
 
     private fun notifyPageChanged() {
+        // ★ 页面内容变化后确保 EPDC 刷新显示新帧：
+        //   若翻页路径已设置 pending（triggerSmartRefresh 设的局部/全刷模式），不覆盖；
+        //   否则（布局完成、章节切换、排版重排等）安排一次 GC16 全刷。
+        //   实际 EPDC 命令在 onDraw 绘制完成后统一发出。
+        if (pendingRefreshMode == null && refreshManager != null) {
+            val area = Rect()
+            getDrawingRect(area)
+            area.top = (area.top + paddingTop + 60).coerceAtMost(area.bottom - 100)
+            area.bottom = (area.bottom - 80).coerceAtLeast(area.top + 100)
+            area.left += paddingLeft
+            area.right -= paddingRight
+            if (area.right <= area.left) area.right = area.left + 1
+            if (area.bottom <= area.top) area.bottom = area.top + 1
+            pendingRefreshArea = area
+            pendingRefreshMode = EinkRefreshManager.RefreshMode.GC16_FULL
+            invalidate()
+        }
         if (pageChangeListener != null) pageChangeListener!!.onPageChanged(currentPage, totalPages)
     }
 
-    /** 在后台线程解码当前页的图片（懒解码） */
-    /** 在调用线程解码当前页的图片 */
+    /** 在调用线程解码当前页的图片（懒解码） */
     private fun decodeCurrentPageImages() {
         log("Image", "decodeCurrentPageImages: chapterImages=${chapterImages != null}, size=${chapterImages?.size}, currentPage=$currentPage, totalPages=$totalPages, pages.size=${pages.size}")
         if (chapterImages == null || currentPage >= pages.size) return
@@ -1040,13 +1292,15 @@ class ReaderView : View {
                 log("Image", "可用图片路径: ${chapterImages?.keys?.joinToString(", ")}")
                 continue
             }
-            val bmp = BitmapFactory.decodeByteArray(imgData, 0, imgData.size)
-            log("Image", "解码结果: bmp=${bmp != null}")
-            if (bmp == null) continue
             val rw = ib.rect?.width() ?: continue
             val rh = ib.rect?.height() ?: continue
-            val scaled = Bitmap.createScaledBitmap(bmp, rw, rh, true)
-            if (scaled != bmp) bmp.recycle()
+            // ★ inSampleSize 两步解码：先 inJustDecodeBounds 取原图尺寸（不分配像素），
+            //   计算降采样倍数后直接解码到接近目标尺寸，避免"原尺寸全图解码 + createScaledBitmap"
+            //   的中间全尺寸 Bitmap（i.MX6 单核低内存场景省一次 ~5MB 级临时对象）
+            val scaled = decodeScaledBitmap(imgData, rw, rh)
+            val dimDesc = if (scaled != null) "${scaled.width}x${scaled.height}" else "null"
+            log("Image", "解码结果: bmp=$dimDesc")
+            if (scaled == null) continue
             ib.bitmap = scaled
             bitmapCache?.put("img_" + (ib.path ?: System.identityHashCode(this)), scaled)
             needsInvalidate = true
@@ -1056,17 +1310,23 @@ class ReaderView : View {
     }
 
     companion object {
-        private val MAX_BITMAP_CACHE_BYTES = 8 * 1024 * 1024
+        // 页缓存：按屏幕实际像素 × RGB_565(2B) × 3 页（前/当前/后）。
+        // 1404×1872×2×3 ≈ 15.8MB；单核无 swap 下兼顾命中率与内存上限。
+        private val MAX_BITMAP_CACHE_BYTES: Int by lazy {
+            val dm = android.content.res.Resources.getSystem().displayMetrics
+            (dm.widthPixels * dm.heightPixels * 2 * 3).coerceIn(6 * 1024 * 1024, 16 * 1024 * 1024)
+        }
 
         // ==================== 点击区域 ====================
         private const val ZONE_PREV = 0
         private const val ZONE_NEXT = 1
         private const val ZONE_MENU = 2
 
-        private const val PAGE_DEBOUNCE_MS = 250L
+        // ★ 滑动翻页阈值（KOReader 借鉴）
+        private const val SWIPE_THRESHOLD_PX = 60f
+        private const val SWIPE_VERTICAL_LIMIT_PX = 40f
 
-        // ==================== 文字自动换行 ====================
-        private const val TEXT_SAFETY_MARGIN = 3.0f
+        private const val PAGE_DEBOUNCE_MS = 250L
     }
 }
 

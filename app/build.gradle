@@ -20,7 +20,7 @@ android {
         ndk {
             abiFilters 'armeabi-v7a', 'arm64-v8a'
         }
-        def enableRust = project.hasProperty('enableRust') ? project.enableRust.toBoolean() : false
+        def enableRust = project.hasProperty('enableRust') ? project.enableRust.toBoolean() : true
         buildConfigField "boolean", "ENABLE_RUST", enableRust ? "true" : "false"
     }
 
@@ -94,16 +94,53 @@ jacoco {
     toolVersion = "0.8.11"
 }
 
+// ===== jacoco 覆盖率报告 + 门禁 =====
+// AGP 的 unit test 覆盖率 exec 由 testCoverageEnabled=true 产出：
+//   app/build/outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec
+// jacocoTestReport          —— 生成 HTML/XML 报告（本地调试 / CI 上传 artifact）
+// jacocoCoverageVerification—— CI 门禁：低于阈值的构建直接失败（棘轮式：只升不降）
+def covExecFile = file("$buildDir/outputs/unit_test_code_coverage/debugUnitTest/testDebugUnitTest.exec")
+def covClassDirs = [file("$buildDir/tmp/kotlin-classes/debug")]
+def covSrcDirs = [file("$projectDir/src/main/java")]
+
+task jacocoTestReport(type: JacocoReport) {
+    dependsOn "testDebugUnitTest"
+    mustRunAfter "testDebugUnitTest"
+    executionData = files(covExecFile)
+    classDirectories = files(covClassDirs)
+    sourceDirectories = files(covSrcDirs)
+    reports {
+        xml.required = true
+        html.required = true
+    }
+}
+
+task jacocoCoverageVerification(type: JacocoCoverageVerification) {
+    dependsOn "testDebugUnitTest"
+    mustRunAfter "testDebugUnitTest"
+    executionData = files(covExecFile)
+    classDirectories = files(covClassDirs)
+    sourceDirectories = files(covSrcDirs)
+    // 棘轮基线：2026-10-14 实测 LINE 覆盖率 3.3%（UI 层 Activity/View 未入 Robolectric 测试，
+    // 被测试的是解析器/存储/刷新管理等纯逻辑类）；门禁取 3%（略低于基线容忍波动）。
+    // 后续补测试时调高此值，禁止下调（棘轮只升不降）。
+    violationRules {
+        rule {
+            limit {
+                counter = 'LINE'
+                value = 'COVEREDRATIO'
+                minimum = 0.03
+            }
+        }
+    }
+}
+
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.9.20"
     // ✅ [Phase 6] Android 4.4 多 dex 支持（EInkReaderApp 继承 MultiDexApplication）
     implementation "androidx.multidex:multidex:2.0.1"
     // ✅ [Phase 6] Android 4.4 Java 8+ 核心库反编译支持（Lambda, Stream API等）
     coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.0.3"
-    
-    // Kotlin 协程
-    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
-    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3"
     
     testImplementation "junit:junit:4.13.2"
     testImplementation "org.mockito:mockito-core:5.11.0"

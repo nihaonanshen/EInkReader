@@ -3,29 +3,42 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="@android:color/white">
+    android:background="@color/background">
 
-    <!-- 书库标题 -->
+    <!-- 书库顶栏：左对齐标题 + 右侧图标 -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="48dp"
+        android:layout_height="@dimen/top_bar_height"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="@color/bg_light"
-        android:paddingLeft="16dp"
-        android:paddingRight="16dp">
+        android:background="@color/surface_muted"
+        android:paddingLeft="@dimen/spacing_lg"
+        android:paddingRight="@dimen/spacing_sm">
 
         <TextView
+            android:id="@+id/tv_library_title"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:gravity="center"
+            android:gravity="left"
             android:text="书库"
-            android:textColor="@android:color/black"
-            android:textSize="20sp"
+            android:textColor="@color/ink"
+            android:textSize="@dimen/title_text_size"
             android:textStyle="bold" />
 
-        <!-- 可选：右侧图标（如搜索）暂时留空 -->
+        <!-- 右侧：关于图标 -->
+        <TextView
+            android:id="@+id/btn_top_about"
+            android:layout_width="@dimen/top_bar_height"
+            android:layout_height="@dimen/top_bar_height"
+            android:gravity="center"
+            android:drawableTop="@drawable/ic_about"
+            android:drawablePadding="2dp"
+            android:background="@drawable/bg_icon_button_eink"
+            android:clickable="true"
+            android:text="关于"
+            android:textColor="@color/btn_text_eink"
+            android:textSize="@dimen/micro_text_size" />
     </LinearLayout>
 
     <!-- 书籍列表 -->
@@ -41,17 +54,44 @@
             android:divider="@null"
             android:dividerHeight="0dp"
             android:listSelector="@android:color/transparent"
-            android:paddingTop="8dp"
-            android:paddingBottom="8dp" />
+            android:paddingTop="@dimen/spacing_sm"
+            android:paddingBottom="@dimen/spacing_sm" />
+
+        <!-- 空状态：无书时显示 -->
+        <LinearLayout
+            android:id="@+id/empty_view"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:drawableTop="@drawable/ic_empty"
+                android:drawablePadding="12dp"
+                android:text="书库为空"
+                android:textColor="@color/ink_muted"
+                android:textSize="@dimen/heading_text_size" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/spacing_sm"
+                android:text="点击下方「导入」添加图书"
+                android:textColor="@color/ink_muted"
+                android:textSize="@dimen/body_text_size" />
+        </LinearLayout>
     </FrameLayout>
 
-    <!-- 底部按钮栏 -->
+    <!-- 底部按钮栏：图标 + 文字，按压瞬时反色 -->
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="56dp"
+        android:layout_height="@dimen/bottom_bar_height"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:background="@color/bg_light">
+        android:background="@color/surface_muted">
 
         <TextView
             android:id="@+id/btn_import"
@@ -59,12 +99,13 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:gravity="center"
+            android:drawableTop="@drawable/ic_import"
+            android:drawablePadding="4dp"
+            android:background="@drawable/bg_button_eink"
+            android:clickable="true"
             android:text="导入"
-            android:textColor="@android:color/black"
-            android:textSize="18sp"
-            android:clickable="true" />
-
-        <View android:layout_width="1dp" android:layout_height="36dp" android:background="@drawable/divider" />
+            android:textColor="@color/btn_text_eink"
+            android:textSize="@dimen/caption_text_size" />
 
         <TextView
             android:id="@+id/btn_recent"
@@ -72,12 +113,13 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="最近阅读"
-            android:textColor="@android:color/black"
-            android:textSize="18sp"
-            android:clickable="true" />
-
-        <View android:layout_width="1dp" android:layout_height="36dp" android:background="@drawable/divider" />
+            android:drawableTop="@drawable/ic_recent"
+            android:drawablePadding="4dp"
+            android:background="@drawable/bg_button_eink"
+            android:clickable="true"
+            android:text="最近"
+            android:textColor="@color/btn_text_eink"
+            android:textSize="@dimen/caption_text_size" />
 
         <TextView
             android:id="@+id/btn_sort"
@@ -85,12 +127,13 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:gravity="center"
-            android:text="排序"
-            android:textColor="@android:color/black"
-            android:textSize="18sp"
-            android:clickable="true" />
-
-        <View android:layout_width="1dp" android:layout_height="36dp" android:background="@drawable/divider" />
+            android:drawableTop="@drawable/ic_sort"
+            android:drawablePadding="4dp"
+            android:background="@drawable/bg_button_eink"
+            android:clickable="true"
+            android:text="按时间"
+            android:textColor="@color/btn_text_eink"
+            android:textSize="@dimen/caption_text_size" />
 
         <TextView
             android:id="@+id/btn_refresh_settings"
@@ -98,12 +141,13 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:gravity="center"
+            android:drawableTop="@drawable/ic_settings"
+            android:drawablePadding="4dp"
+            android:background="@drawable/bg_button_eink"
+            android:clickable="true"
             android:text="设置"
-            android:textColor="@android:color/black"
-            android:textSize="18sp"
-            android:clickable="true" />
-
-        <View android:layout_width="1dp" android:layout_height="36dp" android:background="@drawable/divider" />
+            android:textColor="@color/btn_text_eink"
+            android:textSize="@dimen/caption_text_size" />
 
         <TextView
             android:id="@+id/btn_about"
@@ -111,9 +155,12 @@
             android:layout_height="match_parent"
             android:layout_weight="1"
             android:gravity="center"
+            android:drawableTop="@drawable/ic_about"
+            android:drawablePadding="4dp"
+            android:background="@drawable/bg_button_eink"
+            android:clickable="true"
             android:text="关于"
-            android:textColor="@android:color/black"
-            android:textSize="18sp"
-            android:clickable="true" />
+            android:textColor="@color/btn_text_eink"
+            android:textSize="@dimen/caption_text_size" />
     </LinearLayout>
 </LinearLayout>

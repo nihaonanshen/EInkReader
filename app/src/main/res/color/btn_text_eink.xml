@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 按压时背景反色为 ink（黑），文字变 surface（白）——E-ink 瞬时反色反馈 -->
+    <item android:state_pressed="true" android:color="@color/surface" />
+    <item android:color="@color/ink" />
+</selector>
