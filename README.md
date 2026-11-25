@@ -13,7 +13,7 @@
 | 📖 格式支持 | TXT / EPUB |
 | 🔤 编码检测 | 自动识别 GBK / UTF-8 / Big5 / GB18030 |
 | 📑 智能目录 | 中文章节（第X章/回/卷）+ 英文 Chapter + 特殊章节提取；NCX / EPUB3 nav / 内嵌 HTML 目录页（EasyPub `<div class="toc">`）三路识别，支持多级目录树（卷/部→章节） |
-| 🖼️ 图片显示 | EPUB 内嵌图片渲染（含微信读书源 `data-src` 兼容）；单图 1MB / 总图 64MB 配额保护 |
+| 🖼️ 图片显示 | EPUB 内嵌图片渲染（含微信读书源 `data-src` 兼容）；单图 1MB / 总图 16MB 配额保护（按 Nook Dalvik 256MB 堆限制下调） |
 | 🔠 字体设置 | 字号 / 行距 / 段距 / 边距，支持阅读页内即时调整 |
 | 🆒 自定义字体 | TTF/OTF 字体文件支持 |
 | 🌙 夜间模式 | 黑底灰字，适合暗光阅读 |
@@ -131,6 +131,35 @@ rust/einkreader-core/src/
 ---
 
 # 最近更新
+
+**2026-11-26**：P1/P2/P3 墨水屏 Nook 性能与内存优化批次
+
+### 内存安全（P1）
+- EPUB 图片内存上限调整为总量 16MB / 单图 1MB（自 64MB 下调，防止 Nook Dalvik 256MB 堆 OOM），去重改 HashSet O(n)
+- Rust 混合排版开关：纯文本章节走 Rust 批量布局，含图章节回落 Java 逐行渲染（USE_RUST_LAYOUT_HYBRID）
+
+### 性能（P2）
+- 两端对齐逐字绘制：测量侧批量 getTextWidths + 绘制侧 drawText 区间调用，消除每字 String 分配
+- Rust 布局 with_capacity 预分配 + release profile（opt-level=3 / lto / codegen-units=1）
+- 封面缩略缓存改字节预算 LRU（android.util.LruCache，8MB 封顶，消除无界 HashMap OOM）
+- 夜间模式翻页 GC 3 次合并为 1 次；Rust 排版支持 H1/H2/H3/引用块段落样式（paraType 下发绘制端）
+- 布局缓存键只持文本 hash + 布局参数，不再钉住整章文本
+
+### 墨水屏增强（P3）
+- 前光控制改持久 su pipe（含回退）；Rust 原生编码探测（encoding_rs）+ UTF-8 回退
+- GC16/GL16 刷新可选；书签页恢复；ABI 收敛 armeabi-v7a；DatabaseHelper 异常兜底；启用 largeHeap
+
+### 测试
+- Kotlin 单元测试 175 个全绿；bincode 手工构造器对齐 P1-2 新增的 LineMetric.paraType 末字段
+
+---
+
+**2026-10-14**：代码审查 P1/P2 修复 + 拆分/去重 + 测试与覆盖率门禁（详见 [docs/CODE_REVIEW_2026-10-14.md](docs/CODE_REVIEW_2026-10-14.md)）
+
+- 新增测试类：EinkRefreshManager / FrontlightController / PageBitmapCache / TextWrapper / TocIndexMapper / DebugLog，并加覆盖率门禁
+- 夜间主题 drawable 与布局适配；jni_bridge 清理
+
+---
 
 **2026-08-09**：EPUB 目录识别与图片显示增强 + TXT 解析优化
 
