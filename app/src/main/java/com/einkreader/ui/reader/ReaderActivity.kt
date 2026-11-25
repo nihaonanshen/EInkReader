@@ -104,6 +104,8 @@ class ReaderActivity : Activity() {
     private var fullOverlayBack: TextView? = null
 
     private var refreshManager: EinkRefreshManager? = null
+    // [P2] 记录上次应用的夜间模式状态，未变化时跳过整屏颜色重写（避免每次 resume 多一次重绘）
+    private var lastNightMode: Boolean? = null
     private var chapters: MutableList<Chapter>? = null
     private var currentChapterIndex = 0
     private var prefs: SharedPreferences? = null
@@ -684,6 +686,9 @@ class ReaderActivity : Activity() {
         try {
             val ch = getReaderRepository().jumpToBookmark(checkNotNull(fileKey), idx, checkNotNull(chapters).size)
             if (ch >= 0 && ch < checkNotNull(chapters).size) {
+                // [P3] 恢复书签保存的章节内页码（排版完成后由 ReaderView.pendingPage 消费）
+                val pg = getReaderRepository().bookmarkPage(checkNotNull(fileKey), idx)
+                if (pg >= 0) checkNotNull(readerView).setPendingPage(pg)
                 switchChapterTo(ch)
             }
         } catch (e: Exception) {
@@ -953,8 +958,10 @@ class ReaderActivity : Activity() {
                 val zip = java.util.zip.ZipFile(java.io.File(filePath))
                 val entry = zip.getEntry(checkNotNull(chapter.xhtmlPath))
                 if (entry != null) {
-                    val reader = java.io.InputStreamReader(zip.getInputStream(entry), java.nio.charset.StandardCharsets.UTF_8)
-                    val html = reader.readText()
+                    val raw = zip.getInputStream(entry).use { it.readBytes() }
+                    // [P3-2] 编码探测：老 EPUB 常用 GBK/GB18030，固定 UTF-8 会乱码；
+                    // 优先用 Rust 编码探测器（nativeDetectEncoding），失败兜底 UTF-8
+                    val html = String(raw, detectCharset(raw))
                     zip.close()
                     // HTML 标签清理：统一换行符并消除所有空行（空行在布局中会多加整行高，造成段距异常）
                     // 清洗规则统一收敛到 HtmlCleaner（与 EpubParserFallback 共用）
@@ -968,6 +975,20 @@ class ReaderActivity : Activity() {
             }
         }
         return text
+    }
+
+    /** [P3-2] 探测 EPUB 条目字节的字符集（优先 Rust 探测器，异常/未知名兜底 UTF-8） */
+    private fun detectCharset(raw: ByteArray): java.nio.charset.Charset {
+        if (NativeBridge.Companion.sLibraryLoaded) {
+            try {
+                val name = NativeBridge.bridgeInstance.nativeDetectEncoding(raw, raw.size)
+                val cs = java.nio.charset.Charset.forName(name)
+                Log.d("ReaderActivity", "detectCharset: detected=$name")
+                if (cs != null) return cs
+            } catch (_: Exception) {
+            }
+        }
+        return java.nio.charset.StandardCharsets.UTF_8
     }
 
     /** 后台预取章节内容（翻章零等待）。预取失败不影响正式懒加载。 */
@@ -1275,6 +1296,11 @@ class ReaderActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        val night = checkNotNull(prefs).getBoolean("night_mode", false)
+        // [P2] 夜间配色 + 沉浸式重设放在批量之前：与下方设置批量的重绘合并为一帧，
+        // 原先"设置批量布局全刷 + 夜间改色全刷 + 沉浸式全刷"最多 3 次 GC16 → 现在 1 次
+        applyNightMode(night)
+        applyImmersiveMode()
         if (readerView != null) {
             // ★ 批量应用所有设置，只触发一次 layoutPages（原先 5+ 次重排→1 次）
             // 位置恢复由 layoutPages 内部基于文字指纹自动完成
@@ -1306,13 +1332,10 @@ class ReaderActivity : Activity() {
                     if (ff.exists()) checkNotNull(readerView).setCustomTypeface(Typeface.createFromFile(ff))
                 }
             }
+            // [P2] 阅读器正文配色也随夜间模式切换（此前 setNightMode 从未被调用，正文一直黑字白底）
+            checkNotNull(readerView).setNightMode(night)
             checkNotNull(readerView).commitBatchUpdate()
         }
-        val night = checkNotNull(prefs).getBoolean("night_mode", false)
-        applyNightMode(night)
-
-        // 确保沉浸式全屏不被系统/Activity 恢复覆盖
-        applyImmersiveMode()
     }
 
     override fun onPause() {
@@ -1350,12 +1373,17 @@ class ReaderActivity : Activity() {
         log("Lifecycle", "onDestroy")
         // ✅ 移除 Handler 中所有 pending 消息
         uiHandler?.removeCallbacksAndMessages(null)
-        
+        // [P3] 关掉常驻 su 管道，避免 su 子进程残留
+        FrontlightController.close()
+
         isDestroyed = true
         super.onDestroy()
     }
 
     private fun applyNightMode(night: Boolean) {
+        // [P2] 状态未变则跳过：避免每次 resume 重写全部视图颜色 → 多余的全屏 EPDC 刷新
+        if (lastNightMode == night) return
+        lastNightMode = night
         // 背景类：走 *_night 系列资源（不再用硬编码魔数）
         val root = findViewById<View?>(R.id.root_container)
         if (root != null) root.setBackgroundColor(resources.getColor(if (night) R.color.background_night else R.color.background))

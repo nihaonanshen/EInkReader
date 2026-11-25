@@ -4,6 +4,8 @@ import android.app.Activity
 import android.content.SharedPreferences
 import android.os.Bundle
 import android.os.Environment
+import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import com.einkreader.R
 import java.io.File
@@ -33,6 +35,15 @@ class ReadingSettingsActivity : Activity() {
     private lateinit var btnParaPlus: TextView
     private lateinit var btnMarginMinus: TextView
     private lateinit var btnMarginPlus: TextView
+    private lateinit var labelTextContrast: TextView
+    private lateinit var btnContrastMinus: TextView
+    private lateinit var btnContrastPlus: TextView
+    private lateinit var labelHinting: TextView
+    private lateinit var btnHintingToggle: TextView
+    private lateinit var labelTapZone: TextView
+    private lateinit var btnTapZoneToggle: TextView
+    private lateinit var labelBoldMode: TextView
+    private lateinit var btnBoldToggle: TextView
     private lateinit var fontList: ListView
     private lateinit var switchFirstLineIndent: Switch
     private val fonts = mutableListOf<FontItem>()
@@ -44,10 +55,25 @@ class ReadingSettingsActivity : Activity() {
         setContentView(R.layout.activity_settings)
         prefs = getSharedPreferences("eink_reader_prefs", MODE_PRIVATE)
 
-        // 夜间模式：设置页背景与文字（与阅读页一致的黑底灰字）
+        // 夜间模式：设置页背景与文字（运行时 prefs 切换，走 *_night 系列资源）
         if (prefs.getBoolean("night_mode", false)) {
-            findViewById<android.view.View>(android.R.id.content).setBackgroundColor(-0xddddde)
-            applyNightTextColor(findViewById<android.view.View>(android.R.id.content), -0x444445)
+            findViewById<android.view.View>(android.R.id.content).setBackgroundColor(resources.getColor(R.color.background_night))
+            applyNightTextColor(findViewById<android.view.View>(android.R.id.content), resources.getColor(R.color.ink_night))
+            // 按钮组整组切换反色 selector（保持按压瞬时反色）
+            for (id in intArrayOf(
+                R.id.btn_font_minus, R.id.btn_font_plus,
+                R.id.btn_line_minus, R.id.btn_line_plus,
+                R.id.btn_para_minus, R.id.btn_para_plus,
+                R.id.btn_margin_minus, R.id.btn_margin_plus,
+                R.id.btn_contrast_minus, R.id.btn_contrast_plus,
+                R.id.btn_hinting_toggle, R.id.btn_tap_zone_toggle
+            )) {
+                val v = findViewById<android.view.View>(id)
+                if (v != null) {
+                    v.setBackgroundResource(R.drawable.bg_button_eink_night)
+                    if (v is TextView) v.setTextColor(resources.getColorStateList(R.color.btn_text_eink_night))
+                }
+            }
         }
 
         // Initialize UI elements
@@ -63,6 +89,15 @@ class ReadingSettingsActivity : Activity() {
         btnParaPlus = findViewById(R.id.btn_para_plus)
         btnMarginMinus = findViewById(R.id.btn_margin_minus)
         btnMarginPlus = findViewById(R.id.btn_margin_plus)
+        labelTextContrast = findViewById(R.id.label_text_contrast)
+        btnContrastMinus = findViewById(R.id.btn_contrast_minus)
+        btnContrastPlus = findViewById(R.id.btn_contrast_plus)
+        labelHinting = findViewById(R.id.label_hinting)
+        btnHintingToggle = findViewById(R.id.btn_hinting_toggle)
+        labelTapZone = findViewById(R.id.label_tap_zone)
+        btnTapZoneToggle = findViewById(R.id.btn_tap_zone_toggle)
+        labelBoldMode = findViewById(R.id.label_bold_mode)
+        btnBoldToggle = findViewById(R.id.btn_bold_toggle)
         fontList = findViewById(R.id.font_list)
         switchFirstLineIndent = findViewById(R.id.switch_first_line_indent)
 
@@ -79,11 +114,19 @@ class ReadingSettingsActivity : Activity() {
         val savedLS = prefs.getInt("line_spacing", 14)   // 1.4 default (×10 for 0.1 precision, range 0.1-3.0)
         val savedPS = prefs.getInt("para_spacing", 10)   // 1.0 default (adjusted for 6-inch e-ink)
         val savedHM = prefs.getInt("horizontal_margin", 10)
+        val savedContrast = prefs.getInt("text_contrast", 100)
+        val savedHinting = prefs.getInt("font_hinting", 0)
+        val savedTapZone = prefs.getInt("tap_zone_mode", 0)
+        val savedBoldMode = prefs.getBoolean("bold_mode", false)
 
         labelTextSize.text = savedTextSize.toString()
         labelLineSpacing.text = String.format("%.1f", savedLS / 10f)
         labelParaSpacing.text = String.format("%.1f", savedPS / 10f)
         labelHorizontalMargin.text = savedHM.toString()
+        labelTextContrast.text = savedContrast.toString()
+        labelHinting.text = if (savedHinting == 1) "开" else "关"
+        labelTapZone.text = tapZoneName(savedTapZone)
+        labelBoldMode.text = if (savedBoldMode) "开" else "关"
 
         // --- Text size buttons (±1 step) ---
         btnFontMinus.setOnClickListener {
@@ -133,6 +176,44 @@ class ReadingSettingsActivity : Activity() {
             updateParaSpacing(current + 1)
         }
 
+        // --- 文字对比度（黑度 0-100，100=纯黑；步进 5，范围 50-100 防白字） ---
+        fun updateContrast(value: Int) {
+            val clamped = value.coerceIn(50, 100)
+            labelTextContrast.text = clamped.toString()
+            prefs.edit().putInt("text_contrast", clamped).apply()
+            setResult(RESULT_OK)
+        }
+        btnContrastMinus.setOnClickListener {
+            updateContrast(prefs.getInt("text_contrast", 100) - 5)
+        }
+        btnContrastPlus.setOnClickListener {
+            updateContrast(prefs.getInt("text_contrast", 100) + 5)
+        }
+
+        // --- 字体微调（hinting 开关，E-ink 建议关闭） ---
+        btnHintingToggle.setOnClickListener {
+            val newVal = if (prefs.getInt("font_hinting", 0) == 1) 0 else 1
+            labelHinting.text = if (newVal == 1) "开" else "关"
+            prefs.edit().putInt("font_hinting", newVal).apply()
+            setResult(RESULT_OK)
+        }
+
+        // --- 翻页区域模式（循环 0/1/2） ---
+        btnTapZoneToggle.setOnClickListener {
+            val newVal = (prefs.getInt("tap_zone_mode", 0) + 1) % 3
+            labelTapZone.text = tapZoneName(newVal)
+            prefs.edit().putInt("tap_zone_mode", newVal).apply()
+            setResult(RESULT_OK)
+        }
+
+        // --- 全局粗体（E-ink 对比度增强） ---
+        btnBoldToggle.setOnClickListener {
+            val newVal = !prefs.getBoolean("bold_mode", false)
+            labelBoldMode.text = if (newVal) "开" else "关"
+            prefs.edit().putBoolean("bold_mode", newVal).apply()
+            setResult(RESULT_OK)
+        }
+
         // --- Horizontal margin buttons (step = 1, range 10-60) ---
         fun updateMargin(value: Int) {
             val clamped = value.coerceIn(10, 60)
@@ -151,6 +232,23 @@ class ReadingSettingsActivity : Activity() {
 
         // --- Scan fonts ---
         scanFonts()
+
+        // --- Font list adapter（原代码缺失：ListView 从未设置 adapter 导致字体列表空白） ---
+        val nightPref = prefs.getBoolean("night_mode", false)
+        fontList.adapter = object : BaseAdapter() {
+            override fun getCount(): Int = fonts.size
+            override fun getItem(p: Int): Any? = fonts.getOrNull(p)
+            override fun getItemId(p: Int): Long = p.toLong()
+            override fun getView(p: Int, convertView: View?, parent: android.view.ViewGroup): View {
+                val tv = convertView as? TextView ?: TextView(this@ReadingSettingsActivity).apply {
+                    textSize = 17f
+                    setPadding(12, 10, 12, 10)
+                }
+                tv.text = fonts.getOrNull(p)?.displayName ?: ""
+                tv.setTextColor(resources.getColor(if (nightPref) R.color.ink_night else R.color.ink))
+                return tv
+            }
+        }
 
         // --- Font list click listener ---
         fontList.setOnItemClickListener { parent, view, position, id ->
@@ -182,6 +280,8 @@ class ReadingSettingsActivity : Activity() {
     private fun scanFonts() {
         fonts.clear()
         fonts.add(FontItem("Default System Font", ""))
+        // 内置中文字体子集（DroidSansFallback GB2312 子集 1MB，免外部字体文件即可获得高质量中文渲染）
+        fonts.add(FontItem("内置中文字体（GB2312）", "asset:fonts/DroidSansFallback.ttf"))
         val sdcard = Environment.getExternalStorageDirectory()
         val searchDirs = arrayOf(
             sdcard,
@@ -204,5 +304,13 @@ class ReadingSettingsActivity : Activity() {
             }
         }
         fonts.sortBy { it.displayName.lowercase() }
+    }
+
+    private fun tapZoneName(mode: Int): String {
+        return when (mode) {
+            1 -> "左右各半(无中央菜单)"
+            2 -> "全屏翻下一页"
+            else -> "默认(左30/中菜单/右30)"
+        }
     }
 }

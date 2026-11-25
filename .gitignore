@@ -46,3 +46,20 @@ compile.log
 
 # Reasonix workspace files
 .reasonix/
+
+# 会话探测/构建残留（严禁入库）
+.aapt2-test/
+.acl-recovery/
+.cargo-check.txt
+.cargo-home/
+.cargo-target/
+.gradle-home/
+.probe3/
+build-out/
+nul
+update_1.04.4140.zip
+libeinkreader_core.so
+_*
+rust/stub/
+rust/einkreader-core/src/bin/probe_lazy.rs
+

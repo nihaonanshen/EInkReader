@@ -171,7 +171,7 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
 
         chapters.push(EpubChapter {
             title,
-            content: None, // 懒加载：初始未填充
+            content: Some(String::new()), // 预加载空内容，后续按需填充
             image_paths: parsed.image_paths,
             paragraph_types: parsed.paragraph_types,
             xhtml_path: Some(entry_path), // 保存路径以便后续按需加载
@@ -180,12 +180,16 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
 
     // 5. 提取图片字节（遍历章节引用的图片路径，而非 manifest——保证 key 与
     //    [[IMAGE:path]] 标记一致；JPEG 等二进制数据用字节读取，不能 read_to_string）
-    // 上限：单图 1MB（防单图解码 OOM），总图 64MB（覆盖含大量插图的书，如《全球通史》
-    // 41MB、《人类大历史》9.8MB；过小的总配额会导致后半本书的图片全部被丢弃，阅读时空白）
+    // 上限：单图 1MB（防单图解码 OOM），总图 16MB。
+    // [P1 Nook] 原 64MB（覆盖《全球通史》41MB 插图书）：base64 膨胀 ~25% → ~85MB byte[]
+    // 驻留整个阅读会话，Dalvik 256MB growthlimit（Nook i.MX6）下 OOM 风险高；
+    // 16MB 二进制 → ~21MB b64，可控。代价：《全球通史》等插图书超过 16MB 的图片会被跳过
+    //（用户已接受：正文可读优先，插图书牺牲后半部分图片）。
     const MAX_IMAGE_BYTES: u64 = 1 * 1024 * 1024;
-    const MAX_TOTAL_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+    const MAX_TOTAL_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
     let mut images: HashMap<String, String> = HashMap::new();
     let mut all_image_paths: Vec<String> = Vec::new();
+    let mut seen_images: std::collections::HashSet<String> = std::collections::HashSet::new();
     // 封面图单独入 map（key 固定为 "__cover__"，供书架显示）
     const COVER_KEY: &str = "__cover__";
     if let Some(cover_href) = &opf_result.cover_href {
@@ -206,7 +210,8 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
     }
     for ch in &chapters {
         for p in &ch.image_paths {
-            if !all_image_paths.contains(p) {
+            // [P2] O(1) 去重（原 Vec::contains 全表扫描 → 大图书 O(n²)）
+            if seen_images.insert(p.clone()) {
                 all_image_paths.push(p.clone());
             }
         }

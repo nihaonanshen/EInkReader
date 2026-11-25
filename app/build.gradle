@@ -4,6 +4,12 @@ plugins {
     id "jacoco"
 }
 
+// 本地构建逃生舱：-PEinkBuildOut=<dir> 可把本模块构建目录重定向到别处（供受限环境使用，不影响常规构建）
+def einkBuildOut = findProperty('EinkBuildOut')
+if (einkBuildOut != null) {
+    buildDir = file(einkBuildOut)
+}
+
 android {
     namespace "com.einkreader"
     compileSdk 35
@@ -18,7 +24,7 @@ android {
         // ✅ [Phase 6] Android 4.4 核心库反编译要求启用 Multidex
         multiDexEnabled true
         ndk {
-            abiFilters 'armeabi-v7a', 'arm64-v8a'
+            abiFilters 'armeabi-v7a'
         }
         def enableRust = project.hasProperty('enableRust') ? project.enableRust.toBoolean() : true
         buildConfigField "boolean", "ENABLE_RUST", enableRust ? "true" : "false"

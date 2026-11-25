@@ -181,6 +181,15 @@ class ReaderRepositoryImpl(
         } catch (e: Exception) { Log.e(TAG, "jumpToBookmark failed", e); 0 }
     }
 
+    override fun bookmarkPage(fileKey: String, bookmarkIndex: Int): Int {
+        // 书签 key 形如 chapterIndex_pageIndex（见 addBookmark）
+        return try {
+            val keys = bmPrefs(fileKey).getAll().keys.sorted()
+            if (bookmarkIndex !in keys.indices) return -1
+            keys[bookmarkIndex].substringAfter("_", "").toIntOrNull() ?: -1
+        } catch (e: Exception) { Log.e(TAG, "bookmarkPage failed", e); -1 }
+    }
+
     override fun persistBookRecord(fileKey: String, filePath: String?, fileUri: String?,
                                    isContent: Boolean, totalChapters: Int, format: String?) {
         if (fileKey == null || bookStorage == null) return

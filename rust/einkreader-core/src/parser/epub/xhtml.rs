@@ -276,7 +276,7 @@ fn decode_utf8_at(bytes: &[u8], pos: usize) -> Option<char> {
 /// 且 `src` 存在时优先于 `data-src` 返回。
 fn extract_img_src(html_after_tag: &str) -> Option<String> {
     // 1) 精确匹配 src= 属性（排除 data-src / lazy-src 等带前缀的变体）
-    let mut candidate_src: Option<String> = None;
+    let candidate_src: Option<String> = None;
     let mut candidate_data_src: Option<String> = None;
 
     let bytes = html_after_tag.as_bytes();

@@ -7,6 +7,8 @@ interface ReaderRepository {
     fun addBookmark(fileKey: String, chapterIndex: Int, pageIndex: Int, chapterTitle: String?)
     fun loadBookmarks(fileKey: String): List<String>
     fun jumpToBookmark(fileKey: String, bookmarkIndex: Int, totalChapters: Int): Int
+    /** [P3] 书签保存的章节内页码（未存时返回 -1），跳转后恢复阅读位置 */
+    fun bookmarkPage(fileKey: String, bookmarkIndex: Int): Int
     fun persistBookRecord(fileKey: String, filePath: String?, fileUri: String?,
                           isContent: Boolean, totalChapters: Int, format: String?)
     fun addReadTime(fileKey: String, deltaMs: Long)

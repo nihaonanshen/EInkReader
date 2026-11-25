@@ -2,7 +2,7 @@
 //!
 //! 所有 JNI 函数在此统一管理，转发到纯 Rust 实现。
 
-use jni::objects::{JByteArray, JClass, JObject, JString};
+use jni::objects::{JByteArray, JClass, JIntArray, JObject, JString};
 use jni::sys::{jboolean, jbyteArray, jfloat, jint, jstring};
 use jni::JNIEnv;
 
@@ -228,6 +228,7 @@ pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLayoutTextBin
     mut env: JNIEnv,
     _class: JClass,
     text: JString,
+    para_types: JObject,
     max_width_px: jfloat,
     max_height_px: jfloat,
     font_size_px: jfloat,
@@ -242,9 +243,26 @@ pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLayoutTextBin
             .get_string(&text)
             .expect("Failed to get text string")
             .into();
+        // [P1-2] paraTypes 可空（TXT / 无样式信息时 Java 传 null）→ 空 = 全正文
+        let para_vec: Vec<i32> = if para_types.is_null() {
+            Vec::new()
+        } else {
+            // jni 0.21 无 get_int_array_elements；用 region 拷贝（单次内存传输，Nook 友好）
+            let arr = <&JIntArray>::from(&para_types);
+            let n = env
+                .get_array_length(arr)
+                .expect("Failed to get para_types length") as usize;
+            let mut buf = vec![0i32; n];
+            if n > 0 {
+                env.get_int_array_region(arr, 0, &mut buf)
+                    .expect("Failed to read para_types elements");
+            }
+            buf
+        };
 
         layout::layout_text_binary(
             &text_str,
+            para_vec,
             max_width_px,
             max_height_px,
             font_size_px,

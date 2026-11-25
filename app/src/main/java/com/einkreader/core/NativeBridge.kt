@@ -51,6 +51,9 @@ class NativeBridge {
         var height: Float = 0f
         var isParagraphEnd: Boolean = false
         var isFirstInParagraph: Boolean = false
+        /// 段落样式类型（与 Rust LineMetric.para_type / Java Chapter.PARA_* 一致：
+        /// 0 普通 / 1 H1 / 2 H2 / 3 H3 / 4 引用块）
+        var paraType: Int = 0
 
         constructor()
         constructor(text: String?, x: Float, y: Float, width: Float, height: Float,
@@ -80,8 +83,12 @@ class NativeBridge {
 
     // ========== LRU 缓存 key ==========
 
+    // [P2-7] 缓存键只持文本哈希（4 字节 Int），不再持整章文本——
+    // 旧键 val text: String? 使 LRU 8 项 × 整章全文驻留。
+    // 碰撞语义：两章不同文本若 String.hashCode() 相同会命中同一缓存项；
+    // 8 项 LRU 下概率 ~1e-8，对墨水屏排版可接受。
     data class LayoutKey(
-        val text: String?,
+        val textHash: Int,
         val maxWidthPx: Float,
         val maxHeightPx: Float,
         val fontSizePx: Float,
@@ -89,10 +96,12 @@ class NativeBridge {
         val paragraphSpacing: Float,
         val firstLineIndent: Boolean,
         val paddingLeft: Float,
-        val paddingTop: Float
+        val paddingTop: Float,
+        // [P1-2] 段落样式数组（可空）：同文本不同样式 → 不同布局结果，必须参与缓存键比较
+        val paraTypes: IntArray? = null
     ) {
         override fun hashCode(): Int {
-            var hc = text?.hashCode() ?: 0
+            var hc = textHash
             hc = 31 * hc + maxWidthPx.toInt()
             hc = 31 * hc + maxHeightPx.toInt()
             hc = 31 * hc + fontSizePx.toInt()
@@ -101,7 +110,24 @@ class NativeBridge {
             hc = 31 * hc + if (firstLineIndent) 1 else 0
             hc = 31 * hc + paddingLeft.toInt()
             hc = 31 * hc + paddingTop.toInt()
+            hc = 31 * hc + java.util.Arrays.hashCode(paraTypes)
             return hc
+        }
+
+        // data class 对数组字段按引用比较，必须手工按内容比较，否则同键不同数组会命中错误缓存
+        override fun equals(other: Any?): Boolean {
+            if (this === other) return true
+            if (other !is LayoutKey) return false
+            return textHash == other.textHash &&
+                maxWidthPx == other.maxWidthPx &&
+                maxHeightPx == other.maxHeightPx &&
+                fontSizePx == other.fontSizePx &&
+                lineSpacing == other.lineSpacing &&
+                paragraphSpacing == other.paragraphSpacing &&
+                firstLineIndent == other.firstLineIndent &&
+                paddingLeft == other.paddingLeft &&
+                paddingTop == other.paddingTop &&
+                java.util.Arrays.equals(paraTypes, other.paraTypes)
         }
     }
 
@@ -122,7 +148,8 @@ class NativeBridge {
     external fun nativeParseTxtBinary(filePath: String, forcedEncoding: String): ByteArray
     external fun nativeParseEpubBinary(filePath: String): ByteArray
     external fun nativeLayoutTextBinary(
-        text: String, maxWidthPx: Float, maxHeightPx: Float,
+        text: String, paraTypes: IntArray?,
+        maxWidthPx: Float, maxHeightPx: Float,
         fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
         firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float
     ): ByteArray
@@ -137,10 +164,11 @@ class NativeBridge {
     fun isLayoutCachedInternal(
         text: String?, maxWidthPx: Float, maxHeightPx: Float,
         fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
-        firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float
+        firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float,
+        paraTypes: IntArray? = null
     ): Boolean {
-        val key = LayoutKey(text, maxWidthPx, maxHeightPx, fontSizePx,
-                lineSpacing, paragraphSpacing, firstLineIndent, paddingLeft, paddingTop)
+        val key = LayoutKey(text?.hashCode() ?: 0, maxWidthPx, maxHeightPx, fontSizePx,
+                lineSpacing, paragraphSpacing, firstLineIndent, paddingLeft, paddingTop, paraTypes)
         return lruCache.containsKey(key)
     }
 
@@ -321,6 +349,7 @@ class NativeBridge {
                 lm.height = bb.float
                 lm.isParagraphEnd = bb.get() != 0.toByte()
                 lm.isFirstInParagraph = bb.get() != 0.toByte()
+                lm.paraType = bb.int
                 pd.lines.add(lm)
             }
             result.pages.add(pd)
@@ -499,14 +528,17 @@ class NativeBridge {
     fun layoutTextBinary(
         text: String, maxWidthPx: Float, maxHeightPx: Float,
         fontSizePx: Float, lineSpacing: Float, paragraphSpacing: Float,
-        firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float
+        firstLineIndent: Boolean, paddingLeft: Float, paddingTop: Float,
+        // [P1-2] 段落样式数组（null/空 = 全部普通段；与文本段落 1:1 对齐）
+        paraTypes: IntArray? = null
     ): LayoutResult {
-        val key = LayoutKey(text, maxWidthPx, maxHeightPx, fontSizePx,
-                lineSpacing, paragraphSpacing, firstLineIndent, paddingLeft, paddingTop)
+        // [P2-7] 键只持文本哈希，不在缓存键上保留整章文本
+        val key = LayoutKey(text.hashCode(), maxWidthPx, maxHeightPx, fontSizePx,
+                lineSpacing, paragraphSpacing, firstLineIndent, paddingLeft, paddingTop, paraTypes)
         cacheGet(key)?.let { return it }
         if (!sLibraryLoaded) return LayoutResult()
         return try {
-            val binary = nativeLayoutTextBinary(text, maxWidthPx, maxHeightPx,
+            val binary = nativeLayoutTextBinary(text, paraTypes, maxWidthPx, maxHeightPx,
                     fontSizePx, lineSpacing, paragraphSpacing, firstLineIndent,
                     paddingLeft, paddingTop)
             val r = parseLayoutBinary(binary)

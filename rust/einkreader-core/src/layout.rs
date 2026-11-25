@@ -42,6 +42,9 @@ pub struct LineMetric {
     pub height: f32,
     pub is_paragraph_end: bool,
     pub is_first_in_paragraph: bool,
+    /// 段落样式类型（与 Java Chapter.PARA_* 一致：0 正文 1 H1 2 H2 3 H3 4 引文）。
+    /// Java 绘制端据此套用字号倍数/伪粗体；x 坐标已按样式居中/缩进计算。
+    pub para_type: i32,
 }
 
 /// 估算字符宽度（单位：em，相对于 font_size）
@@ -60,9 +63,13 @@ fn char_width_em(c: char) -> f32 {
 }
 
 /// 执行文本布局（完整分页 + 精确坐标 + 基准计时）
+///
+/// `para_types`：段落样式数组，与 `text.split('\n')` 的段落一一对应
+/// （0 正文 1 H1 2 H2 3 H3 4 引文，缺省为正文）。TXT 书传空切片即可。
 #[inline(always)]
 pub fn layout_text(
     text: &str,
+    para_types: &[i32],
     max_width_px: f32,
     max_height_px: f32,
     font_size_px: f32,
@@ -84,16 +91,8 @@ pub fn layout_text(
     }
 
     let content_width = max_width_px - padding_left;
-    // 行高 = 字体大小 × 行距倍数
-    let line_height = font_size_px * line_spacing;
-    // 段距 = 字体大小 × 段距倍数（独立于行距）
+    // 行高按段落样式逐行计算（FlattenedLine.line_h），段距 = 字体大小 × 段距倍数（独立于行距）
     let para_extra = font_size_px * paragraph_spacing.max(0.0);
-    let indent_px = if first_line_indent {
-        font_size_px * 1.6
-    } else {
-        0.0
-    };
-
     // ========== 第一步：按 \n 拆分为段落 ==========
     let paragraphs: Vec<&str> = text.split('\n').collect();
 
@@ -104,12 +103,16 @@ pub fn layout_text(
         width: f32,
         is_paragraph_end: bool,
         is_first_in_paragraph: bool,
+        /// 段落样式类型（透传到 LineMetric）
+        para_type: i32,
+        /// 该行实际行高（H1 等段落样式有独立行高）
+        line_h: f32,
     }
 
     let mut flat_lines: Vec<FlattenedLine> = Vec::with_capacity(paragraphs.len() * 2);
     let mut line_height_count = 0usize;
 
-    for para in paragraphs {
+    for (pi, para) in paragraphs.iter().enumerate() {
         if para.is_empty() {
             if let Some(last) = flat_lines.last_mut() {
                 last.is_paragraph_end = true;
@@ -117,28 +120,59 @@ pub fn layout_text(
             continue;
         }
 
-        let mut line_builder = String::with_capacity(para.len());
+        // [P1-2/P2-6] 段落样式（与 Java 路径 ReaderView:622-643 对齐）：
+        // H1 字号×1.8/行距1.2/段距×1.5/居中粗体；H2 ×1.5/段距×1.2/粗体；
+        // H3 ×1.2/粗体；引文 ×0.9/左右缩进 2em
+        let ptype = para_types.get(pi).copied().unwrap_or(0);
+        let (font_mult, ls_ovr, side_indent, centered): (f32, Option<f32>, f32, bool) = match ptype {
+            1 => (1.8_f32, Some(1.2_f32), 0.0_f32, true),
+            2 => (1.5_f32, None, 0.0_f32, false),
+            3 => (1.2_f32, None, 0.0_f32, false),
+            4 => (0.9_f32, None, font_size_px * 2.0_f32, false),
+            _ => (1.0_f32, None, 0.0_f32, false),
+        };
+        let p_font = font_size_px * font_mult;
+        let p_line_h = match ls_ovr {
+            Some(m) => p_font * m,
+            None => p_font * line_spacing,
+        };
+        // 首行缩进与 Java 对齐：仅正文段落缩进 1em（原 1.6em 且全段落）
+        let p_indent = if first_line_indent && ptype == 0 { p_font } else { 0.0 };
+        let avail_w = content_width - side_indent * 2.0_f32;
+        let x_base = padding_left + side_indent;
+        // [P2-2] 行字节容量 ≈ 每行字符数 × 3（UTF-8 CJK 3 字节上限），
+        // 替代原「每行都预分配整段字节数」的过度分配（单核 Nook 热循环分配削减）
+        let line_cap = if p_font > 0.0 {
+            ((avail_w.max(1.0) / p_font) * 3.0_f32 + 8.0_f32) as usize
+        } else {
+            para.len()
+        };
+
+        let mut line_builder = String::with_capacity(line_cap.min(para.len()));
         let mut line_width = 0.0_f32;
         let mut is_first_char = true;
         let mut is_first_line_in_para = true;
 
         for ch in para.chars() {
-            let cw = font_size_px * char_width_em(ch);
-            let current_indent = if is_first_char && first_line_indent {
-                indent_px
-            } else {
-                0.0
-            };
+            let cw = p_font * char_width_em(ch);
+            let current_indent = if is_first_char { p_indent } else { 0.0 };
 
-            if line_width + cw > content_width - current_indent && !line_builder.is_empty() {
+            if line_width + cw > avail_w - current_indent && !line_builder.is_empty() {
+                let line_x = if centered {
+                    x_base + (avail_w - line_width) / 2.0_f32
+                } else {
+                    x_base + current_indent
+                };
                 // Save current line and reset builder using mem::replace (avoids clone)
-                let line_text = std::mem::replace(&mut line_builder, String::with_capacity(para.len()));
+                let line_text = std::mem::replace(&mut line_builder, String::with_capacity(line_cap.min(para.len())));
                 flat_lines.push(FlattenedLine {
                     text: line_text,
-                    x: padding_left + current_indent,
+                    x: line_x,
                     width: line_width,
                     is_paragraph_end: false,
                     is_first_in_paragraph: is_first_line_in_para,
+                    para_type: ptype,
+                    line_h: p_line_h,
                 });
                 line_height_count += 1;
                 // line_builder is already empty after replace, no need to clear
@@ -147,8 +181,8 @@ pub fn layout_text(
                 is_first_line_in_para = false;
             }
 
-            if is_first_char && first_line_indent {
-                line_width += indent_px;
+            if is_first_char {
+                line_width += p_indent;
             }
             line_builder.push(ch);
             line_width += cw;
@@ -157,21 +191,32 @@ pub fn layout_text(
 
         // 刷出段落最后一行
         if !line_builder.is_empty() {
+            let line_x = if centered {
+                x_base + (avail_w - line_width) / 2.0_f32
+            } else if is_first_line_in_para {
+                x_base + p_indent
+            } else {
+                x_base
+            };
             flat_lines.push(FlattenedLine {
-                text: line_builder.clone(),
-                x: padding_left + if is_first_line_in_para && first_line_indent { indent_px } else { 0.0 },
+                text: std::mem::take(&mut line_builder),
+                x: line_x,
                 width: line_width,
                 is_paragraph_end: true,
                 is_first_in_paragraph: is_first_line_in_para,
+                para_type: ptype,
+                line_h: p_line_h,
             });
             line_height_count += 1;
         } else if !flat_lines.is_empty() && para.len() != 0 {
             flat_lines.push(FlattenedLine {
                 text: String::new(),
-                x: padding_left,
+                x: x_base,
                 width: 0.0,
                 is_paragraph_end: true,
                 is_first_in_paragraph: is_first_line_in_para,
+                para_type: ptype,
+                line_h: p_line_h,
             });
             line_height_count += 1;
         }
@@ -187,22 +232,26 @@ pub fn layout_text(
 
     while line_index < flat_lines.len() {
         let line = &flat_lines[line_index];
-        let line_h = line_height;
+        // [P2-6] 行高随段落样式（H1 独立行距）；段距同按类型
+        let line_extra = match line.para_type {
+            1 => font_size_px * 1.5_f32,
+            2 => font_size_px * 1.2_f32,
+            _ => para_extra,
+        };
         let effective_height = if line.is_paragraph_end {
-            line_h + para_extra
+            line.line_h + line_extra
         } else {
-            line_h
+            line.line_h
         };
 
         // 检查是否超出页面（至少一行）
         if page_height + effective_height > max_height_px && page_line_count > 0 {
+            // [P2-2] mem::take 零拷贝移交（原 clone 后 clear：每页边界深拷贝全部行指标）
             pages.push(PageData {
-                content: page_builder.clone(),
+                content: std::mem::take(&mut page_builder),
                 line_count: page_line_count,
-                lines: page_metrics.clone(),
+                lines: std::mem::take(&mut page_metrics),
             });
-            page_builder.clear();
-            page_metrics.clear();
             page_height = 0.0;
             page_line_count = 0;
             // 不回退 line_index，继续处理当前行
@@ -219,6 +268,7 @@ pub fn layout_text(
                 height: effective_height,
                 is_paragraph_end: line.is_paragraph_end,
                 is_first_in_paragraph: line.is_first_in_paragraph,
+                para_type: line.para_type,
             });
             page_line_count += 1;
             page_height += effective_height;
@@ -248,6 +298,7 @@ pub fn layout_text(
 #[inline(always)]
 pub fn layout_text_binary(
     text: &str,
+    para_types: Vec<i32>,
     max_width_px: f32,
     max_height_px: f32,
     font_size_px: f32,
@@ -258,7 +309,7 @@ pub fn layout_text_binary(
     padding_top: f32,
 ) -> Vec<u8> {
     let result = layout_text(
-        text, max_width_px, max_height_px,
+        text, &para_types, max_width_px, max_height_px,
         font_size_px, line_spacing, paragraph_spacing,
         first_line_indent, padding_left, padding_top,
     );
@@ -276,7 +327,7 @@ pub fn batch_layout_texts(
 ) -> Vec<LayoutResult> {
     texts.iter().map(|&text| {
         layout_text(
-            text, params.max_width_px, params.max_height_px,
+            text, &[], params.max_width_px, params.max_height_px,
             params.font_size_px, params.line_spacing, params.paragraph_spacing,
             params.first_line_indent, params.padding_left, params.padding_top,
         )
@@ -333,7 +384,7 @@ mod tests {
 
     #[test]
     fn test_simple_ascii_text() {
-        let result = layout_text("Hello World", 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        let result = layout_text("Hello World", &[], 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
         assert!(!result.pages.is_empty());
         assert!(result.total_lines > 0);
     }
@@ -341,7 +392,7 @@ mod tests {
     #[test]
     fn test_chinese_text() {
         let text = "这是一段中文测试文本，用于验证 Rust 布局引擎的分行和分页逻辑。";
-        let result = layout_text(text, 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        let result = layout_text(text, &[], 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
         assert!(!result.pages.is_empty());
         assert!(result.total_lines > 0);
         assert!(result.elapsed_ns > 0);
@@ -349,7 +400,7 @@ mod tests {
 
     #[test]
     fn test_empty_text() {
-        let result = layout_text("", 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        let result = layout_text("", &[], 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
         assert_eq!(result.total_lines, 0);
         assert_eq!(result.total_pages, 0);
     }
@@ -357,7 +408,7 @@ mod tests {
     #[test]
     fn test_line_metric_has_coordinates() {
         let text = "测试坐标";
-        let result = layout_text(text, 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        let result = layout_text(text, &[], 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
         if !result.pages.is_empty() && !result.pages[0].lines.is_empty() {
             let lm = &result.pages[0].lines[0];
             assert!(lm.x >= 0.0, "x should be >= 0");
@@ -369,7 +420,7 @@ mod tests {
     #[test]
     fn test_binary_roundtrip() {
         let text = "二进制序列化测试";
-        let binary = layout_text_binary(text, 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        let binary = layout_text_binary(text, Vec::new(), 200.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
         assert!(!binary.is_empty(), "binary should not be empty");
         let deserialized: LayoutResult = bincode::deserialize(&binary).unwrap();
         assert_eq!(deserialized.total_pages, deserialized.pages.len());
@@ -383,14 +434,14 @@ mod tests {
         let font_size = 16.0;
         let line_spacing = 1.5;
         let max_height = font_size * line_spacing * 10.0;
-        let result = layout_text(&text, 500.0, max_height, font_size, line_spacing, 1.8, false, 10.0, 10.0);
+        let result = layout_text(&text, &[], 500.0, max_height, font_size, line_spacing, 1.8, false, 10.0, 10.0);
         assert!(result.total_pages >= 2, "should have at least 2 pages, got {}", result.total_pages);
     }
 
     #[test]
     fn test_large_text_performance() {
         let text = "测试".repeat(5000);
-        let result = layout_text(&text, 300.0, 800.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        let result = layout_text(&text, &[], 300.0, 800.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
         assert!(result.total_pages > 0);
         // 5000 中文字符的处理时间通常 < 50ms
         assert!(result.elapsed_ns < 50_000_000, "took {}ns", result.elapsed_ns);
@@ -399,7 +450,7 @@ mod tests {
     #[test]
     fn test_y_monotonic() {
         let text = "第一行\n第二行\n第三行\n第四行\n第五行";
-        let result = layout_text(text, 500.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        let result = layout_text(text, &[], 500.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
         if !result.pages.is_empty() {
             let lines = &result.pages[0].lines;
             for i in 1..lines.len() {

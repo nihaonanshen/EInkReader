@@ -27,6 +27,7 @@ tempfile = "3"
 
 [profile.release]
 lto = true
-opt-level = "z"
+# [P2] Nook 单核 i.MX6：opt-level 3 优先执行效率（原 "z" 尺寸优先在小核上更慢；3.1GB /data 空间充足）
+opt-level = 3
 strip = true
 codegen-units = 1

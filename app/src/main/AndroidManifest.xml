@@ -6,7 +6,6 @@
     <!-- 权限声明 -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
-    <uses-permission android:name="android.permission.INTERNET" />
 
     <!-- 墨水屏适配：任何 DPI 都不缩放 -->
     <supports-screens
@@ -19,6 +18,7 @@
     <application
         android:name=".EInkReaderApp"
         android:allowBackup="false"
+        android:largeHeap="true"
         android:icon="@drawable/ic_launcher"
         android:label="@string/app_name"
         android:theme="@style/AppTheme"
@@ -38,7 +38,6 @@
                             <category android:name="android.intent.category.DEFAULT" />
                             <category android:name="android.intent.category.BROWSABLE" />
                             <data android:scheme="einkreader" android:host="*" />
-                            <data android:scheme="https" android:host="example.com" />
                             <data android:mimeType="text/plain" />
                             <data android:mimeType="application/epub+zip" />
                         </intent-filter>

@@ -134,15 +134,20 @@ class DatabaseHelper(
         if (fileKey == null) return
         progressCache.remove(fileKey)
         val db = writableDatabase
+        // [P3] 事务加固：beginTransaction 自身抛错（锁竞争）时，finally 不得再 endTransaction（无配对锁 → IllegalStateException）
+        var began = false
         try {
             db.beginTransaction()
+            began = true
             db.delete("books", "$KEY_FILE_KEY=?", arrayOf(fileKey))
             db.delete("progress", "$KEY_FILE_KEY=?", arrayOf(fileKey))
             db.setTransactionSuccessful()
         } catch (e: Exception) {
             DebugLog.log(TAG, "deleteBook failed: ${e.message}")
         } finally {
-            db.endTransaction()
+            if (began) {
+                try { db.endTransaction() } catch (_: Exception) {}
+            }
         }
     }
 
@@ -206,11 +211,17 @@ class DatabaseHelper(
     }
 
     override fun getTotalReadTime(): Long {
-        val c = readableDatabase.rawQuery("SELECT SUM($KEY_TOTAL_READ_MS) AS total FROM books", null)
-        return try {
-            if (c != null && c.moveToFirst()) c.getLong(0) else 0L
-        } finally {
-            c?.close()
+        // [P3] rawQuery 可能因库损坏/锁竞争抛错（调用方多为 UI 统计展示，不能让它崩掉界面）→ 兜底 0
+        try {
+            val c = readableDatabase.rawQuery("SELECT SUM($KEY_TOTAL_READ_MS) AS total FROM books", null)
+            return try {
+                if (c != null && c.moveToFirst()) c.getLong(0) else 0L
+            } finally {
+                c?.close()
+            }
+        } catch (e: Exception) {
+            DebugLog.log(TAG, "getTotalReadTime failed: ${e.message}")
+            return 0L
         }
     }
 

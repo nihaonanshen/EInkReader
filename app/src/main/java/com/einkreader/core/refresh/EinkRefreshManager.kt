@@ -44,19 +44,19 @@ class EinkRefreshManager(context: Context) {
          * @return true=已写入（驱动已接受）
          */
         @JvmStatic
-        fun performSysfsFullRefresh(): Boolean {
+        fun performSysfsFullRefresh(waveform: String = "gc16"): Boolean {
             return try {
                 val f = java.io.File(EPDC_UPDATE_PATH)
                 if (f.exists()) {
-                    f.writeText("gc16")
-                    DebugLog.log(TAG, "sysfs gc16 full refresh OK")
+                    f.writeText(waveform)
+                    DebugLog.log(TAG, "sysfs $waveform full refresh OK")
                     true
                 } else {
                     DebugLog.log(TAG, "sysfs update file missing")
                     false
                 }
             } catch (e: Exception) {
-                DebugLog.log(TAG, "sysfs gc16 failed: ${e.message}")
+                DebugLog.log(TAG, "sysfs $waveform failed: ${e.message}")
                 false
             }
         }
@@ -220,6 +220,20 @@ class EinkRefreshManager(context: Context) {
         return mode
     }
 
+    /**
+     * 读取设置页配置的全刷波形：gc16（默认，标准 16 级灰度全刷，彻底但闪烁多）
+     * 或 gl16（无灰度快速全刷，闪烁小、速度快，清残影略弱）。
+     * 设置页「刷新设置 → 全刷波形」开关写入 eink_reader_prefs.refresh_waveform_gl16（Boolean）。
+     */
+    fun currentWaveform(): String {
+        return try {
+            if (appContext?.getSharedPreferences("eink_reader_prefs", Context.MODE_PRIVATE)
+                    ?.getBoolean("refresh_waveform_gl16", false) == true) "gl16" else "gc16"
+        } catch (e: Exception) {
+            "gc16"
+        }
+    }
+
     /** 读取设置页配置的全刷间隔（每翻 N 页全刷一次；范围 1-50，默认 8） */
     private fun currentFullRefreshInterval(): Int {
         return try {
@@ -294,7 +308,7 @@ class EinkRefreshManager(context: Context) {
      */
     private fun applyEpdcSysfs(area: Rect, mode: RefreshMode): Boolean {
         if (mode != RefreshMode.GC16_FULL) return false
-        return performSysfsFullRefresh()
+        return performSysfsFullRefresh(currentWaveform())
     }
 
     private fun applyFallbackRefresh(view: View?, area: Rect?, mode: RefreshMode) {

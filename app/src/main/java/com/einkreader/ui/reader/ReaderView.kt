@@ -58,6 +58,8 @@ class ReaderView : View {
     private var currentChapter: Chapter? = null
     var totalPages: Int = 0
         private set
+    // [P3] 跨章节页码待恢复（书签跳转等）：切章后新章节未排版完成，页码先暂存、排版落地后消费
+    private var pendingPage: Int = -1
 
     // ==================== 图片数据 ====================
     private var chapterImages: MutableMap<String?, ByteArray?>? = null
@@ -511,24 +513,45 @@ class ReaderView : View {
         if (content.isEmpty()) content = "(本章内容为空)"
 
         // ===== Rust 布局分支（二进制路径，直接使用精确坐标） =====
-        if (FeatureFlags.USE_RUST_LAYOUT) {
+        // [P1-2] 混合门控：纯文字章节走 Rust（含段落样式），含图片章节回退 Java 渲染
+        val hasImages = content.indexOf("[[IMAGE:") >= 0
+        if (FeatureFlags.USE_RUST_LAYOUT || (FeatureFlags.USE_RUST_LAYOUT_HYBRID && !hasImages)) {
+            // [Layout fix] Rust 内部 content_width = max_width_px - padding_left，
+            // 调用方须传完整宽（cw+padL）/完整高（ch+padT），使可用区与 Java 路径一致
             val rustResult: NativeBridge.LayoutResult = NativeBridge.bridgeInstance.layoutTextBinary(
-                content, contentWidth.toFloat(), contentHeight.toFloat(),
-                ts * dens, ls, ps, indentEnabled, padL.toFloat(), padT.toFloat()
+                content,
+                contentWidth.toFloat() + padL, contentHeight.toFloat() + padT,
+                ts * dens, ls, ps, indentEnabled, padL.toFloat(), padT.toFloat(),
+                chapter.paragraphTypes.toIntArray()
             )
             if (rustResult != null && rustResult.totalPages > 0) {
                 val rustPages: MutableList<Page?> = ArrayList<Page?>(rustResult.pages.size)
+                // 段落样式（与 Java 路径一致）：H1 放大居中 / H2 / H3 放大加粗 / 引用缩进
+                val indentPx = (ts * dens * 2).toInt()
                 for (pi in rustResult.pages.indices) {
                     val pd = rustResult.pages.get(pi)
                     val page = Page()
                     for (lm in pd.lines) {
+                        val pt = lm.paraType
+                        val pTS = when (pt) {
+                            1 -> ts * 1.8f
+                            2 -> ts * 1.5f
+                            3 -> ts * 1.2f
+                            4 -> ts * 0.9f
+                            else -> ts
+                        }
+                        val pBold = (pt == 1 || pt == 2 || pt == 3)
+                        // 两端对齐目标宽（与 Java 路径 justifyW=actCW 一致，绘制时按实际字距展开）
+                        val actCW = if (pt == 4 && indentPx * 2 < contentWidth) contentWidth - indentPx * 2 else contentWidth
+                        val pJustify = if (pt != 1 && !lm.isParagraphEnd) actCW.toFloat() else 0f
                         page.lines.add(
                             ReaderView.TextLine(
                                 lm.text ?: "",
                                 lm.x,  // Rust 精确 x 坐标（像素）
                                 lm.y,  // Rust 精确 y 坐标（像素）
-                                ts,  // fontSize (sp)
-                                false // bold flag
+                                pTS,  // fontSize (sp)
+                                pBold,
+                                pJustify
                             )
                         )
                     }
@@ -561,6 +584,12 @@ class ReaderView : View {
                                 }
                             }
                             if (found >= 0) currentPage = found
+                        }
+                        // [P3] 跨章节页码恢复（书签跳转的显式意图优先于指纹）
+                        val pp = pendingPage
+                        if (pp >= 0) {
+                            pendingPage = -1
+                            currentPage = if (pp < totalPages) pp else max(0, totalPages - 1)
                         }
                         // ★ 越界兜底：currentPage 超过新章节页数时重置到章末
                         if (currentPage >= totalPages) currentPage = max(0, totalPages - 1)
@@ -821,6 +850,12 @@ class ReaderView : View {
                     }
                 }
 
+                // [P3] 跨章节页码恢复（书签跳转的显式意图优先于指纹）
+                val pp = pendingPage
+                if (pp >= 0) {
+                    pendingPage = -1
+                    currentPage = if (pp < totalPages) pp else max(0, totalPages - 1)
+                }
                 // ★ 越界兜底：currentPage 超过新章节页数时重置到章末
                 //   （修复：切上一章时 goToPage(旧 totalPages-1) 立即执行，
                 //    导致 currentPage 残留旧页码越界，onDraw 显示"排版中"）
@@ -935,7 +970,9 @@ class ReaderView : View {
                     textPaint!!.getTextWidths(t, 0, t.length, widths)
                     var cx = line.x
                     for (i in 0 until t.length) {
-                        c.drawText(t[i].toString(), cx, line.y, textPaint!!)
+                        // [P2-1] 区间 drawText(t, i, i+1, ...)：每字零 String 分配
+                        // （原 t[i].toString() 每帧每字新建一个 String 对象）
+                        c.drawText(t, i, i + 1, cx, line.y, textPaint!!)
                         cx += widths[i] + step
                     }
                 }
@@ -1247,6 +1284,11 @@ class ReaderView : View {
             if (getParent() is View) (getParent() as View).postInvalidate()
             invalidate()
         }
+    }
+
+    /** [P3] 暂存目标页码：新章节布局完成并落地到 pages 后自动恢复（书签跳转等跨章目标） */
+    fun setPendingPage(p: Int) {
+        if (p >= 0) pendingPage = p
     }
 
     fun setOnPageChangeListener(l: OnPageChangeListener?) {
