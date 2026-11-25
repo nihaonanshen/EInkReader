@@ -45,6 +45,7 @@ class NativeBridgeApiTest {
                 bb.putFloat(16.0f)  // height
                 bb.put(1)          // isParagraphEnd
                 bb.put(0)          // isFirstInParagraph
+                bb.putInt(0)       // paraType（P1-2 起 bincode LineMetric 末字段，0=正文）
             }
         }
         bb.putLong(lineCounts.sum().toLong())  // totalLines

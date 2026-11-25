@@ -51,6 +51,7 @@ class NativeBridgeBincodeTest {
         bb.putFloat(16.0f)   // height
         bb.put(1)            // isParagraphEnd
         bb.put(0)            // isFirstInParagraph
+        bb.putInt(0)         // paraType（P1-2 起 bincode LineMetric 末字段，0=正文）
 
         // totalLines: u64 = 1
         bb.putLong(1)
@@ -120,6 +121,7 @@ class NativeBridgeBincodeTest {
         bb.putFloat(16.0f)
         bb.put(1) // isParagraphEnd
         bb.put(1) // isFirstInParagraph
+        bb.putInt(0) // paraType（P1-2 起 bincode LineMetric 末字段）
         bb.putLong(1) // totalLines
         bb.putLong(1) // totalPages
         bb.putLong(0) // elapsedNs
@@ -256,6 +258,7 @@ class NativeBridgeBincodeTest {
         ws("r1")
         bb.putFloat(0.0f); bb.putFloat(0.0f); bb.putFloat(50.0f); bb.putFloat(16.0f)
         bb.put(1); bb.put(1)
+        bb.putInt(0) // paraType
         bb.putLong(1); bb.putLong(1); bb.putLong(0)
         // 元素2
         bb.putLong(1)
@@ -264,6 +267,7 @@ class NativeBridgeBincodeTest {
         ws("r2")
         bb.putFloat(0.0f); bb.putFloat(16.0f); bb.putFloat(60.0f); bb.putFloat(16.0f)
         bb.put(1); bb.put(1)
+        bb.putInt(0) // paraType
         bb.putLong(1); bb.putLong(1); bb.putLong(0)
         val len = bb.position()
         val results = bridge.parseBatchLayoutBinary(java.util.Arrays.copyOf(bb.array(), len))
