@@ -32,7 +32,8 @@ class DatabaseHelperTest {
     fun tearDown() {
         val keys = arrayOf("test_key_1", "k1", "k2", "del_key", "prog_key", 
                 "upd_key", "time_key", "rt_key", "z_key", "sum1", "sum2", "cascade_key", 
-                "sample_book", "recent_test_book")
+                "sample_book", "recent_test_book",
+                "bm_key", "bm_cascade_key")
         for (key in keys) {
             db.deleteBook(key)
         }
@@ -281,5 +282,86 @@ class DatabaseHelperTest {
 
         db.deleteBook("cascade_key")
         assertThat(db.loadProgress("cascade_key")).isNull()
+    }
+
+    // ===== [P1-#25] 书签 DB 存储 =====
+
+    @Test
+    fun addBookmark_andListBookmarks() {
+        val b1 = BookStorage.BookBookmark().apply {
+            fileKey = "bm_key"
+            chapterIndex = 3
+            pageIndex = 7
+            chapterTitle = "第三章"
+            createdAt = 100L
+        }
+        val b2 = BookStorage.BookBookmark().apply {
+            fileKey = "bm_key"
+            chapterIndex = 1
+            pageIndex = 2
+            chapterTitle = "第一章"
+            createdAt = 90L
+        }
+        db.addBookmark(b1)
+        db.addBookmark(b2)
+
+        val list = db.listBookmarks("bm_key")
+        assertThat(list).hasSize(2)
+        // 按 章/页 排序（与阅读面板书签顺序一致）
+        assertThat(list[0].chapterIndex).isEqualTo(1)
+        assertThat(list[0].pageIndex).isEqualTo(2)
+        assertThat(list[0].chapterTitle).isEqualTo("第一章")
+        assertThat(list[1].chapterIndex).isEqualTo(3)
+        assertThat(list[1].chapterTitle).isEqualTo("第三章")
+        assertThat(list[1].createdAt).isEqualTo(100L)
+    }
+
+    @Test
+    fun addBookmark_samePrimaryKey_replaces() {
+        val a = BookStorage.BookBookmark().apply {
+            fileKey = "bm_key"
+            chapterIndex = 2
+            pageIndex = 4
+            chapterTitle = "旧标题"
+        }
+        val b = BookStorage.BookBookmark().apply {
+            fileKey = "bm_key"
+            chapterIndex = 2
+            pageIndex = 4
+            chapterTitle = "新标题"
+        }
+        db.addBookmark(a)
+        db.addBookmark(b)
+        val list = db.listBookmarks("bm_key")
+        assertThat(list).hasSize(1)
+        assertThat(list[0].chapterTitle).isEqualTo("新标题")
+    }
+
+    @Test
+    fun deleteBookmark_removesEntry() {
+        db.addBookmark(BookStorage.BookBookmark().apply {
+            fileKey = "bm_key"
+            chapterIndex = 5
+            pageIndex = 9
+            chapterTitle = "第五章"
+        })
+        db.deleteBookmark("bm_key", 5, 9)
+        assertThat(db.listBookmarks("bm_key")).isEmpty()
+    }
+
+    @Test
+    fun deleteBook_cascadesToBookmarks() {
+        db.upsertBook(BookStorage.BookRecord().apply {
+            fileKey = "bm_cascade_key"
+            filePath = "/bm.txt"
+        })
+        db.addBookmark(BookStorage.BookBookmark().apply {
+            fileKey = "bm_cascade_key"
+            chapterIndex = 0
+            pageIndex = 3
+            chapterTitle = "序"
+        })
+        db.deleteBook("bm_cascade_key")
+        assertThat(db.listBookmarks("bm_cascade_key")).isEmpty()
     }
 }

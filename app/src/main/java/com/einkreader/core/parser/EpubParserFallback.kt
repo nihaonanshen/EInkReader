@@ -1,4 +1,4 @@
-﻿package com.einkreader.core.parser
+package com.einkreader.core.parser
 
 import android.util.Log
 import com.einkreader.core.model.Chapter
@@ -27,11 +27,11 @@ class EpubParserFallback {
         @JvmStatic
         fun isValidEpub(file: java.io.File?): Boolean {
             if (file == null || !file.exists() || file.length() == 0L) return false
+            // [review-#33] use{} 保证异常路径也关闭 ZipFile（旧写法 getEntry 抛错时句柄泄漏）
             return try {
-                val zip = java.util.zip.ZipFile(file)
-                val hasContainer = zip.getEntry("META-INF/container.xml") != null
-                zip.close()
-                hasContainer
+                java.util.zip.ZipFile(file).use { zip ->
+                    zip.getEntry("META-INF/container.xml") != null
+                }
             } catch (e: Exception) {
                 false
             }

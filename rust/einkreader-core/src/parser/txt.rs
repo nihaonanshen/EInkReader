@@ -125,7 +125,11 @@ impl ChapterPatterns {
         if self.combined.is_match(trimmed) {
             trimmed.to_string()
         } else if self.combined_strict.is_match(trimmed) {
-            // 宽松模式未命中时回退严格模式（覆盖 "Chapter 三" 等严格支持、宽松不支持的格式）
+            // [review-#8 核实] 该分支【可达、勿当死代码】：宽松/严格均全行锚定（\A..\z）。
+            // 宽松 ch 变体（all[3..7]）只吃单个定界符或数字/字母后缀；严格版 L47 的
+            // [.-:\s]* 允许多定界符 + 中文数字。故 "CHAPTER  十二"（双空格）、
+            // "Chapter - 三"（连字符+空格）等宽松失配、严格命中 → 走本分支。
+            // test_strict_extract_title / test_extract_title_strict_branch_reachable 钉死行为。
             trimmed.to_string()
         } else {
             String::new()
@@ -658,6 +662,17 @@ mod tests {
         assert_eq!(patterns.extract_title("Chapter 三"), "Chapter 三");
         assert_eq!(patterns.extract_title("Chapter 十二"), "Chapter 十二");
         assert!(patterns.is_strict_chapter_title("Chapter 三"));
+    }
+
+    // [review-#8] 钉死"宽松失配 → 严格回退"分支可达性：多定界符 + 中文数字编号
+    // 只被严格版 [.-:\s]* 接受（宽松仅单定界符/数字/字母后缀）
+    #[test]
+    fn test_extract_title_strict_branch_reachable() {
+        let patterns = ChapterPatterns::new();
+        assert_eq!(patterns.extract_title("CHAPTER  十二"), "CHAPTER  十二");
+        assert_eq!(patterns.extract_title("Chapter - 三"), "Chapter - 三");
+        // 对照：单定界符 + 中文数字由宽松 all[5] 覆盖（不走严格分支，结果一致）
+        assert_eq!(patterns.extract_title("Chapter 三"), "Chapter 三");
     }
 
     #[test]

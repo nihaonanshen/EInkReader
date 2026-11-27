@@ -24,7 +24,10 @@ android {
         // ✅ [Phase 6] Android 4.4 核心库反编译要求启用 Multidex
         multiDexEnabled true
         ndk {
-            abiFilters 'armeabi-v7a'
+            // [review-#43] jniLibs 已同时携带 armeabi-v7a 与 arm64-v8a 的
+            // libeinkreader_core.so；旧 abiFilters 只放行 v7a，64 位设备上
+            // 64 位 .so 被打包链路丢掉 → 补齐 arm64-v8a
+            abiFilters 'armeabi-v7a', 'arm64-v8a'
         }
         def enableRust = project.hasProperty('enableRust') ? project.enableRust.toBoolean() : true
         buildConfigField "boolean", "ENABLE_RUST", enableRust ? "true" : "false"

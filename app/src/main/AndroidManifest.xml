@@ -15,6 +15,11 @@
         android:xlargeScreens="true"
         android:anyDensity="true" />
 
+    <!-- [review-#45] 键盘/触控屏非必需（E-ink 设备可能缺任一）：
+         显式声明 required=false，避免商店/设备匹配按默认必需过滤安装 -->
+    <uses-feature android:name="android.hardware.keyboard" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
     <application
         android:name=".EInkReaderApp"
         android:allowBackup="false"
@@ -48,7 +53,7 @@
             android:name=".ui.reader.ReaderActivity"
             android:label="@string/reader"
             android:screenOrientation="portrait"
-            android:configChanges="orientation|screenSize"
+            android:configChanges="keyboardHidden|orientation|screenSize|smallestScreenSize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

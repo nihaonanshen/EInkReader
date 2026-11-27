@@ -36,28 +36,40 @@ class EinkRefreshManager(context: Context) {
         /** ntx_6sl (mxc_epdc_fb) 的 EPDC 刷新命令入口：666 权限，普通 app 进程可写，无需 root */
         private const val EPDC_UPDATE_PATH = "/sys/class/graphics/fb0/update"
 
+        // [review-#40] sysfs 写专用单线程低优先级 executor（串行不堆积；
+        // 旧实现在调用者线程（主线程）做文件 I/O + 驱动交互，可阻塞翻页 UI）
+        private val sysfsExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(java.util.concurrent.ThreadFactory { r ->
+            Thread(r, "sysfs-refresh").apply { priority = Thread.MIN_PRIORITY }
+        })
+
         /**
          * 触发一次全屏 GC16 全刷（清残影）。
          * 实测（nook6plus）：`echo gc16 > /sys/class/graphics/fb0/update` 有效——
          * 屏幕明显全刷闪烁、残影全部清除；与系统自带全刷等效，且无需 root。
          * 供 ReaderActivity/ReadingSettingsActivity 等任意位置直接调用。
-         * @return true=已写入（驱动已接受）
+         * [review-#40] 实际写入在后台单线程 executor 执行（本函数只做存在性预检 + 派发，不阻塞主线程）。
+         * @return true=已派发写入（驱动将接受）；false=入口文件缺失/派发失败
          */
         @JvmStatic
         fun performSysfsFullRefresh(waveform: String = "gc16"): Boolean {
-            return try {
-                val f = java.io.File(EPDC_UPDATE_PATH)
-                if (f.exists()) {
-                    f.writeText(waveform)
-                    DebugLog.log(TAG, "sysfs $waveform full refresh OK")
-                    true
-                } else {
-                    DebugLog.log(TAG, "sysfs update file missing")
-                    false
+            val f = java.io.File(EPDC_UPDATE_PATH)
+            if (!f.exists()) {
+                DebugLog.log(TAG, "sysfs update file missing")
+                return false
+            }
+            try {
+                sysfsExecutor.execute {
+                    try {
+                        f.writeText(waveform)
+                        DebugLog.log(TAG, "sysfs $waveform full refresh OK")
+                    } catch (e: Exception) {
+                        DebugLog.log(TAG, "sysfs $waveform failed: ${e.message}")
+                    }
                 }
+                return true
             } catch (e: Exception) {
-                DebugLog.log(TAG, "sysfs $waveform failed: ${e.message}")
-                false
+                DebugLog.log(TAG, "sysfs $waveform dispatch failed: ${e.message}")
+                return false
             }
         }
 

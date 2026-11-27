@@ -32,6 +32,9 @@ class BookListAdapter(
      *  本地 android-35 桩 jar 缺少 android.os.LruCache（P2-4 原代码误导入，且 os 版无零参构造） */
     private val coverBitmapCache: LruCache<String, Bitmap> = createCoverCache()
 
+    /** [review-#39] 封面文件路径字符串缓存：getView 不再每次 bind 拼接路径 + 创建 File 对象 */
+    private val coverPathCache = HashMap<String, String>()
+
     init {
         preloadProgress()
     }
@@ -92,7 +95,7 @@ class BookListAdapter(
                      (rec?.filePath != null && checkNotNull(rec.filePath).lowercase().endsWith(".epub"))
         // 优先显示缓存封面图（ReaderActivity 打开书时写入 cacheDir/covers/<key>.jpg）
         val coverKey = checkNotNull(book.fileKey).hashCode().toString(16) + ".jpg"
-        val coverPath = JavaFile(ctx.cacheDir, "covers/$coverKey").absolutePath
+        val coverPath = coverPathCache.getOrPut(coverKey) { JavaFile(ctx.cacheDir, "covers/$coverKey").absolutePath }
         val coverBmp: Bitmap? = coverBitmapCache.get(coverPath)
             ?: decodeCover(coverPath).also { if (it != null) coverBitmapCache.put(coverPath, it) }
         if (coverBmp != null) {

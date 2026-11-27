@@ -33,7 +33,7 @@ class NativeBridgeApiTest {
         }
         bb.putLong(pageCount.toLong())
         for (pi in 0 until pageCount) {
-            ws("内容$pi")
+            // [P1-#35/#36] PageData.content 已移除（不再写内容字符串）
             val lc = lineCounts[pi]
             bb.putLong(lc.toLong())
             bb.putLong(lc.toLong()) // Vec<LineMetric> len

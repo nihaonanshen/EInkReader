@@ -11,7 +11,7 @@ import java.util.ArrayList
 class DatabaseHelper(
     context: Context
 ) : android.database.sqlite.SQLiteOpenHelper(
-        context.applicationContext, "einkreader.db", null, 1
+        context.applicationContext, "einkreader.db", null, 2 // [P1-#25] V2：bookmarks 表
     ), BookStorage {
 
     companion object {
@@ -29,6 +29,18 @@ class DatabaseHelper(
         private const val KEY_CHAPTER_INDEX = "chapter_index"
         private const val KEY_PAGE_INDEX = "page_index"
         private const val KEY_UPDATED_AT = "updated_at"
+        // [P1-#25] bookmarks 表（书签自 legacy prefs 迁入）
+        private const val TABLE_BOOKMARKS = "bookmarks"
+        private const val KEY_CHAPTER_TITLE = "chapter_title"
+        private const val KEY_BM_CREATED_AT = "created_at"
+        private val SQL_CREATE_BOOKMARKS = """
+            CREATE TABLE IF NOT EXISTS bookmarks (
+                file_key TEXT NOT NULL, chapter_index INTEGER NOT NULL DEFAULT 0,
+                page_index INTEGER NOT NULL DEFAULT 0, chapter_title TEXT,
+                created_at INTEGER DEFAULT 0,
+                PRIMARY KEY (file_key, chapter_index, page_index)
+            )
+        """.trimIndent()
     }
 
     private var initialized = false
@@ -62,10 +74,15 @@ class DatabaseHelper(
         """.trimIndent()
         db.execSQL(createBooks)
         db.execSQL(createProgress)
+        // [P1-#25] bookmarks 表
+        db.execSQL(SQL_CREATE_BOOKMARKS)
     }
 
     override fun onUpgrade(db: SQLiteDatabase?, oldVersion: Int, newVersion: Int) {
-        // V1 only
+        // [P1-#25] V2：旧库补 bookmarks 表（新装由 onCreate 直接创建）
+        if (oldVersion < 2) {
+            db?.execSQL(SQL_CREATE_BOOKMARKS)
+        }
     }
 
     override fun initialize() {
@@ -141,6 +158,8 @@ class DatabaseHelper(
             began = true
             db.delete("books", "$KEY_FILE_KEY=?", arrayOf(fileKey))
             db.delete("progress", "$KEY_FILE_KEY=?", arrayOf(fileKey))
+            // [P1-#25] 级联清理该书书签
+            db.delete(TABLE_BOOKMARKS, "$KEY_FILE_KEY=?", arrayOf(fileKey))
             db.setTransactionSuccessful()
         } catch (e: Exception) {
             DebugLog.log(TAG, "deleteBook failed: ${e.message}")
@@ -155,8 +174,12 @@ class DatabaseHelper(
         if (progress.fileKey == null) return
         progressCache.put(checkNotNull(progress.fileKey), progress)
         val db = writableDatabase
+        // [P0] 事务加固：beginTransaction 自身可能抛异常（锁竞争/DB 损坏），
+        // 此时 finally 里不得再 endTransaction（不成对 → IllegalStateException），与 deleteBook 一致
+        var began = false
         try {
             db.beginTransaction()
+            began = true
             val cv = android.content.ContentValues().apply {
                 put(KEY_FILE_KEY, progress.fileKey)
                 put(KEY_CHAPTER_INDEX, progress.chapterIndex)
@@ -172,7 +195,9 @@ class DatabaseHelper(
         } catch (e: Exception) {
             DebugLog.log(TAG, "saveProgress failed: ${e.message}")
         } finally {
-            db.endTransaction()
+            if (began) {
+                try { db.endTransaction() } catch (_: Exception) { }
+            }
         }
     }
 
@@ -222,6 +247,62 @@ class DatabaseHelper(
         } catch (e: Exception) {
             DebugLog.log(TAG, "getTotalReadTime failed: ${e.message}")
             return 0L
+        }
+    }
+
+    // [P1-#25] 书签 DB 存储（自 repo 层 legacy bookmarks_ prefs 迁入）
+    override fun addBookmark(bm: BookStorage.BookBookmark) {
+        if (bm.fileKey.isEmpty()) return
+        try {
+            val db = writableDatabase
+            val cv = android.content.ContentValues().apply {
+                put(KEY_FILE_KEY, bm.fileKey)
+                put(KEY_CHAPTER_INDEX, bm.chapterIndex)
+                put(KEY_PAGE_INDEX, bm.pageIndex)
+                put(KEY_CHAPTER_TITLE, bm.chapterTitle)
+                put(KEY_BM_CREATED_AT, bm.createdAt)
+            }
+            db.insertWithOnConflict(TABLE_BOOKMARKS, null, cv, CONFLICT_REPLACE)
+        } catch (e: Exception) {
+            DebugLog.log(TAG, "addBookmark failed: ${e.message}")
+        }
+    }
+
+    override fun listBookmarks(fileKey: String): List<BookStorage.BookBookmark> {
+        if (fileKey.isEmpty()) return emptyList()
+        val result = ArrayList<BookStorage.BookBookmark>()
+        try {
+            val c = readableDatabase.query(
+                TABLE_BOOKMARKS, null, "$KEY_FILE_KEY=?", arrayOf(fileKey), null, null,
+                "$KEY_CHAPTER_INDEX ASC, $KEY_PAGE_INDEX ASC"
+            )
+            c?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    result.add(BookStorage.BookBookmark().apply {
+                        this.fileKey = cursor.getString(cursor.getColumnIndexOrThrow(KEY_FILE_KEY))
+                        chapterIndex = cursor.getInt(cursor.getColumnIndexOrThrow(KEY_CHAPTER_INDEX))
+                        pageIndex = cursor.getInt(cursor.getColumnIndexOrThrow(KEY_PAGE_INDEX))
+                        chapterTitle = cursor.getString(cursor.getColumnIndexOrThrow(KEY_CHAPTER_TITLE)) ?: ""
+                        createdAt = cursor.getLong(cursor.getColumnIndexOrThrow(KEY_BM_CREATED_AT))
+                    })
+                }
+            }
+        } catch (e: Exception) {
+            DebugLog.log(TAG, "listBookmarks failed: ${e.message}")
+        }
+        return result
+    }
+
+    override fun deleteBookmark(fileKey: String, chapterIndex: Int, pageIndex: Int) {
+        if (fileKey.isEmpty()) return
+        try {
+            writableDatabase.delete(
+                TABLE_BOOKMARKS,
+                "$KEY_FILE_KEY=? AND $KEY_CHAPTER_INDEX=? AND $KEY_PAGE_INDEX=?",
+                arrayOf(fileKey, chapterIndex.toString(), pageIndex.toString())
+            )
+        } catch (e: Exception) {
+            DebugLog.log(TAG, "deleteBookmark failed: ${e.message}")
         }
     }
 

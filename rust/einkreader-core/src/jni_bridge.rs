@@ -10,6 +10,46 @@ use crate::encoding;
 use crate::layout;
 use crate::parser;
 
+/// [P0-#1] 错误字节数组：1=状态字节（错误）+ UTF-8 错误信息。
+/// 旧协议无状态字节，合法 payload 首字节恰好为 1 时会被 Java 端误判为错误
+fn err_bytes(msg: &str) -> Vec<u8> {
+    let mut bytes = vec![1u8];
+    bytes.extend_from_slice(msg.as_bytes());
+    bytes
+}
+
+/// [P0-#12] i32 溢出保护的 jbyteArray 构建：
+/// 原 `bytes.len() as i32` 在超 2GB 时截断为负数 → JNI 崩溃；
+/// 现失败时统一返回空数组（Java 端将空结果视为失败，回退 Java 解析器）
+fn build_byte_array(env: &JNIEnv, bytes: &[u8]) -> jbyteArray {
+    let len = match i32::try_from(bytes.len()) {
+        Ok(l) => l,
+        Err(_) => {
+            return env
+                .new_byte_array(0)
+                .expect("Failed to create empty byte array")
+                .into_raw();
+        }
+    };
+    let arr = match env.new_byte_array(len) {
+        Ok(a) => a,
+        Err(_) => {
+            return env
+                .new_byte_array(0)
+                .expect("Failed to create empty byte array")
+                .into_raw();
+        }
+    };
+    let i8: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();
+    if env.set_byte_array_region(&arr, 0, &i8).is_err() {
+        return env
+            .new_byte_array(0)
+            .expect("Failed to create empty byte array")
+            .into_raw();
+    }
+    arr.into_raw()
+}
+
 /// 编码检测
 // `data` 是原始 JNI 指针，调用方保证非空有效；标记 `unsafe` 符合 clippy `not_unsafe_ptr_arg_deref`
 #[no_mangle]
@@ -73,29 +113,21 @@ pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeParseTxtBinar
         };
 
         match parser::txt::parse_txt(&path, forced_opt) {
-            Ok(parse_result) => {
-                // 使用 bincode 二进制序列化（比 JSON 快 3-5 倍，体积小 40-60%）
-                bincode::serialize(&parse_result).unwrap_or_default()
-            }
-            Err(e) => {
-                // 错误码 1 + 错误信息
-                let mut bytes = vec![1u8];
-                bytes.extend_from_slice(e.as_bytes());
-                bytes
-            }
+            // [P0-#1] 统一协议：0=状态字节（成功）+ bincode payload；序列化失败也走错误路径
+            Ok(parse_result) => match bincode::serialize(&parse_result) {
+                Ok(payload) => {
+                    let mut bytes = vec![0u8];
+                    bytes.extend_from_slice(&payload);
+                    bytes
+                }
+                Err(e) => err_bytes(&format!("TXT bincode 序列化失败: {}", e)),
+            },
+            Err(e) => err_bytes(e.as_str()),
         }
     }));
 
     match result {
-        Ok(bytes) => {
-            let arr = env
-                .new_byte_array(bytes.len() as i32)
-                .expect("Failed to create byte array");
-            let bytes_i8: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();
-            env.set_byte_array_region(&arr, 0, &bytes_i8)
-                .expect("Failed to set byte array region");
-            arr.into_raw()
-        }
+        Ok(bytes) => build_byte_array(&env, &bytes),
         Err(_) => env
             .new_byte_array(0)
             .expect("Failed to create empty byte array")
@@ -117,28 +149,21 @@ pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeParseEpubBina
             .into();
 
         match parser::epub::parse_epub(&path) {
-            Ok(parse_result) => {
-                // 使用 bincode 二进制序列化（比 JSON 快 3-5 倍，体积小 40-60%）
-                bincode::serialize(&parse_result).unwrap_or_default()
-            }
-            Err(e) => {
-                let mut bytes = vec![1u8];
-                bytes.extend_from_slice(e.as_bytes());
-                bytes
-            }
+            // [P0-#1] 统一协议：0=状态字节（成功）+ bincode payload；序列化失败也走错误路径
+            Ok(parse_result) => match bincode::serialize(&parse_result) {
+                Ok(payload) => {
+                    let mut bytes = vec![0u8];
+                    bytes.extend_from_slice(&payload);
+                    bytes
+                }
+                Err(e) => err_bytes(&format!("EPUB bincode 序列化失败: {}", e)),
+            },
+            Err(e) => err_bytes(e.as_str()),
         }
     }));
 
     match result {
-        Ok(bytes) => {
-            let arr = env
-                .new_byte_array(bytes.len() as i32)
-                .expect("Failed to create byte array");
-            let bytes_i8: Vec<i8> = bytes.iter().map(|&b| b as i8).collect();
-            env.set_byte_array_region(&arr, 0, &bytes_i8)
-                .expect("Failed to set byte array region");
-            arr.into_raw()
-        }
+        Ok(bytes) => build_byte_array(&env, &bytes),
         Err(_) => env
             .new_byte_array(0)
             .expect("Failed to create empty byte array")
@@ -147,6 +172,24 @@ pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeParseEpubBina
 }
 
 /// 加载指定章节内容（懒加载按需读取）
+/// [P1-#3] JSON 字符串转义：Rust 错误消息可能含引号/反斜杠/控制字符，
+/// 直接拼进 {"error":"..."} 会产出非法 JSON；先转义再拼
+fn json_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            other if (other as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", other as u32)),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 #[no_mangle]
 pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLoadEpubChapterContent(
     mut env: JNIEnv,
@@ -160,7 +203,7 @@ pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLoadEpubChapt
 
         match parser::epub::load_chapter_content(&path, &chapter_path) {
             Ok(content) => content,
-            Err(e) => format!("{{\"error\":\"{}\"}}", e),
+            Err(e) => format!("{{\"error\":\"{}\"}}", json_escape(&e)),
         }
     }));
 
@@ -170,7 +213,7 @@ pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLoadEpubChapt
             .expect("Failed to create string")
             .into_raw(),
         Err(_) => env
-            .new_string("{\"error:\"加载过程panic\"}")
+            .new_string("{\"error\":\"加载过程 panic\"}")
             .expect("Failed to create string")
             .into_raw(),
     }
@@ -206,15 +249,7 @@ pub unsafe extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLayout
     }));
 
     match result {
-        Ok(binary) => {
-            let arr = env
-                .new_byte_array(binary.len() as i32)
-                .expect("Failed to create byte array");
-            let binary_i8: Vec<i8> = binary.iter().map(|&b| b as i8).collect();
-            env.set_byte_array_region(&arr, 0, &binary_i8)
-                .expect("Failed to set byte array region");
-            arr.into_raw()
-        }
+        Ok(binary) => build_byte_array(&env, &binary),
         Err(_) => env
             .new_byte_array(0)
             .expect("Failed to create empty byte array")
@@ -275,16 +310,8 @@ pub extern "system" fn Java_com_einkreader_core_NativeBridge_nativeLayoutTextBin
     }));
 
     match result {
-        Ok(binary) => {
-                    let arr = env
-                        .new_byte_array(binary.len() as i32)
-                        .expect("Failed to create byte array");
-                    let binary_i8: Vec<i8> = binary.iter().map(|&b| b as i8).collect();
-                    env.set_byte_array_region(&arr, 0, &binary_i8)
-                        .expect("Failed to set byte array region");
-                    arr.into_raw()
-                            }
-                            Err(_) => env
+        Ok(binary) => build_byte_array(&env, &binary),
+        Err(_) => env
             .new_byte_array(0)
             .expect("Failed to create empty byte array")
             .into_raw(),

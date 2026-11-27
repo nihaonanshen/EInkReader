@@ -20,7 +20,10 @@ object EncodingDetector {
                 val actualRead = fis.read(header, 0, readSize)
                 if (actualRead <= 0) return@use "UTF-8"
                 // 先检查 BOM（与 ByteArray 版本一致）
-                detectByBom(header, actualRead) ?: detectByDecoding(header, actualRead)
+                // [review-#23] 与 detect(ByteArray) 对齐：BOM 未命中时先走 UTF-8 统计短路，
+                // 避免对大 UTF-8 文件走完整解码探测（两版本行为不一致）
+                detectByBom(header, actualRead)
+                    ?: if (isUtf8ByStats(header, actualRead)) "UTF-8" else detectByDecoding(header, actualRead)
             }
         } catch (e: IOException) {
             android.util.Log.w("EncDetector", "probeEncoding failed", e)

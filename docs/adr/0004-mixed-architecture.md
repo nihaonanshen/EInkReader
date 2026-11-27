@@ -10,13 +10,14 @@ EInkReader 需要处理高耗时的文本解析（TXT/EPUB排版）、编码检�
 
 具体技术选型：
 - **Rust 侧**：`einkreader-core` crate，编译为动态库（.so），提供以下功能：
-  - 编码检测 (`encoding.rs`)
-  - TXT 解析 (`parser/txt.rs`)
-  - EPUB 解析 (`parser/epub.rs`)
-  - 文本布局排版 (`layout.rs`)
-  - JNI 桥接 (`jni_bridge.rs`)
+  - 编码检测（`encoding/mod.rs`）
+  - TXT 解析（`parser/txt.rs`）
+  - EPUB 解析（`parser/epub/` 模块：`mod.rs` 入口 + container/opf/title/toc/xhtml/zip_utils 子模块）
+  - 文本布局排版（`layout.rs`，共享数据结构在 `types.rs`）
+  - JNI 桥接（`jni_bridge.rs`）
+  （模块清单 [ADR 同步] 已与当前源码树核对；早期文档中的 `encoding.rs` / `parser/epub.rs` 单文件形态已拆分为上述模块）
 - **Kotlin 侧**：`com.einkreader.core.NativeBridge` 类通过 `System.loadLibrary("einkreader_core")` 加载原生库，声明 `external fun` 方法调用 Rust 函数
-- **数据交换**：目前使用 JSON 序列化（serde_json），未来计划迁移到 bincode 二进制格式以降低序列化和传输开销
+- **数据交换**：已迁移到 bincode 二进制格式（byte[] + 状态字节：0=成功+载荷 / 1=失败+UTF-8 错误信息），替代早期 serde_json JSON 序列化，降低序列化和传输开销 [review-#42]
 
 ## Considered Options
 

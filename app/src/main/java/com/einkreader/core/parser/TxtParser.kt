@@ -4,7 +4,6 @@ import android.util.Log
 import com.einkreader.core.model.Chapter
 import com.einkreader.core.NativeBridge
 import java.io.BufferedReader
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -30,7 +29,9 @@ class TxtParser {
         private const val DEFAULT_CHAPTER_SIZE = 3000 // 无标题时按3000字一章
         private const val CACHE_DIR_NAME = "txt_parse_cache"
         private const val CACHE_VERSION = "v3"  // v3: 移除 fullContent 急切加载，改为懒加载
-        private const val MAX_FILE_SIZE = 50L * 1024 * 1024  // 50 MB 上限
+        // [review-#22] 与 Rust 侧上限对齐：150 MB（epub/txt 统一大书支持；
+        // 旧 50 MB 会把 Rust 接受的文件在 Java 预检阶段拒掉 → 两端不一致）
+        private const val MAX_FILE_SIZE = 150L * 1024 * 1024  // 150 MB 上限
 
         // ===== 章节标题正则（综合版，覆盖主流中文小说格式）=====
         @JvmField
@@ -196,15 +197,19 @@ class TxtParser {
             }
 
             // 一次读取全文件到 byte[]
+            // [review] 去掉 BAOS「内部数组 + toByteArray() 拷贝」双份缓冲：
+            // 直接预分配精确大小的数组填充，峰值内存从 2x 降到 1x
             val fileBytes: ByteArray
             FileInputStream(file).use { fis ->
-                val baos = ByteArrayOutputStream(Math.max(8192, Math.min(file.length(), Int.MAX_VALUE.toLong()).toInt()))
-                val buf = ByteArray(8192)
-                var n: Int
-                while (fis.read(buf).also { n = it } != -1) {
-                    baos.write(buf, 0, n)
+                val size = file.length().toInt()
+                val data = ByteArray(if (size > 0) size else 1)
+                var off = 0
+                while (off < size) {
+                    val n = fis.read(data, off, size - off)
+                    if (n < 0) break
+                    off += n
                 }
-                fileBytes = baos.toByteArray()
+                fileBytes = if (off < data.size) data.copyOf(off) else data
             }
 
             // 检测编码
@@ -518,6 +523,8 @@ class TxtParser {
         private fun readCache(file: File, forcedEncoding: String?): ParseResult? {
             val cacheFile = getCacheFile(file)
             if (!cacheFile.exists()) return null
+            // [review] 损坏/截断的缓存文件不应让解析器崩溃：整体 try-catch，失败即返回 null 走全量重解析
+            try {
             BufferedReader(InputStreamReader(FileInputStream(cacheFile), "UTF-8")).use { reader ->
                 val cachedKey = reader.readLine()
                 if (getCacheKey(file, forcedEncoding) != cachedKey) return null
@@ -527,7 +534,8 @@ class TxtParser {
                 val result = ParseResult()
                 result.bookTitle = title
                 result.encoding = encoding
-                val fullBuilder = StringBuilder()
+                // [review-#29] 缓存命中路径不再急切拼装 fullContent（与 v3 注释一致）：
+                // 由 getFullContent() 首次调用时从 chapters 按需拼接
                 for (i in 0 until chapterCount) {
                     val chTitle = unescapeFromCache(reader.readLine())
                     val lineStart = Integer.parseInt(reader.readLine())
@@ -545,10 +553,12 @@ class TxtParser {
                         // adjust not needed for correctness
                     }
                     result.chapters.add(Chapter(chTitle, content, lineStart, lineEnd))
-                    fullBuilder.append(content)
                 }
-                result.fullContent = fullBuilder.toString()
                 return result
+            }
+            } catch (e: Exception) {
+                Log.e("TxtParser", "readCache failed, fallback to full parse", e)
+                return null
             }
         }
 

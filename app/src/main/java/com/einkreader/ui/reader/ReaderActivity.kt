@@ -394,6 +394,8 @@ class ReaderActivity : Activity() {
      * 前光亮度（0-100）：委托 FrontlightController（sysfs su 子进程管理已抽离）。
      */
     private fun readFrontlightFromSysfs() {
+        // [review-#31] 先初始化控制器：绑定 appContext + 回读持久化亮度（幂等，可重复调用）
+        FrontlightController.init(this)
         FrontlightController.readFromSysfs { }
     }
 
@@ -1046,7 +1048,7 @@ class ReaderActivity : Activity() {
                 val text = loadChapterText(chapter, filePath)
 
                 chapter.content = text ?: ""
-                Log.d("ReaderActivity", "Lazy load chapter content loaded: ${text!!.length} chars")
+                Log.d("ReaderActivity", "Lazy load chapter content loaded: ${text?.length ?: 0} chars")
                 uiHandler?.post(Runnable {
                     isLoadingChapter = false
                     hideLoading()

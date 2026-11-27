@@ -7,6 +7,7 @@ import android.widget.CheckBox
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
+import com.einkreader.R
 
 class RefreshSettingsActivity : Activity() {
 
@@ -18,30 +19,36 @@ class RefreshSettingsActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // [review-#21] 夜间模式跟随主题色（旧硬编码 白底/黑字 与 night_mode 切换脱节）
+        val night = getSharedPreferences("eink_reader_prefs", MODE_PRIVATE).getBoolean("night_mode", false)
+        val bgColor = resources.getColor(if (night) R.color.background_night else R.color.background)
+        val inkColor = resources.getColor(if (night) R.color.ink_night else R.color.ink)
+        val mutedColor = resources.getColor(if (night) R.color.ink_muted_night else R.color.ink_muted)
+
         val root = android.widget.LinearLayout(this).apply {
             orientation = android.widget.LinearLayout.VERTICAL
-            setBackgroundColor(0xFFFFFFFF.toInt())
+            setBackgroundColor(bgColor)
             setPadding(20, 20, 20, 20)
         }
 
         TextView(this).apply {
             text = "刷新设置"
             setTextSize(22f)
-            setTextColor(0xFF000000.toInt())
+            setTextColor(inkColor)
             setPadding(0, 0, 0, 20)
         }.also { root.addView(it) }
 
         TextView(this).apply {
             text = "墨水屏翻页后会有残影，需要定期全屏刷新清除残影。"
             textSize = 15f
-            setTextColor(0xFF666666.toInt())
+            setTextColor(mutedColor)
             setPadding(0, 0, 0, 8)
         }.also { root.addView(it) }
 
         TextView(this).apply {
             text = "设置每翻几页做一次全屏刷新（越小越清晰，但闪烁越多）："
             textSize = 15f
-            setTextColor(0xFF666666.toInt())
+            setTextColor(mutedColor)
             setPadding(0, 0, 0, 20)
         }.also { root.addView(it) }
 
@@ -52,7 +59,7 @@ class RefreshSettingsActivity : Activity() {
 
         labelInterval = TextView(this).apply {
             textSize = 18f
-            setTextColor(0xFF000000.toInt())
+            setTextColor(inkColor)
             setPadding(0, 0, 16, 0)
         }
         row.addView(labelInterval)
@@ -69,14 +76,14 @@ class RefreshSettingsActivity : Activity() {
         android.widget.TextView(this).apply {
             text = "全刷波形（设置每 N 页的全屏刷新使用哪种波形）："
             textSize = 15f
-            setTextColor(0xFF666666.toInt())
+            setTextColor(mutedColor)
             setPadding(0, 20, 0, 8)
         }.also { root.addView(it) }
 
         cbWaveform = CheckBox(this).apply {
             text = "使用 GL16 快速全刷（不勾选 = GC16 标准，清残影更彻底）"
             textSize = 15f
-            setTextColor(0xFF000000.toInt())
+            setTextColor(inkColor)
             setPadding(0, 0, 0, 12)
         }
         root.addView(cbWaveform)
@@ -99,10 +106,13 @@ class RefreshSettingsActivity : Activity() {
             override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
                 val p = if (progress < 1) 1 else progress
                 labelInterval.text = "每 $p 页"
-                prefs.edit().putInt("refresh_interval", p).apply()
+                // [review-#21] 拖动过程只更新标签；原来每个 tick 都写一次 prefs，
+                // 一次拖动产生 N 次 Editor.apply()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar) {}
             override fun onStopTrackingTouch(seekBar: SeekBar) {
+                // [review-#21] 松手时一次性保存
+                prefs.edit().putInt("refresh_interval", seekRefreshInterval.progress).apply()
                 Toast.makeText(this@RefreshSettingsActivity, "已保存", Toast.LENGTH_SHORT).show()
             }
         })

@@ -41,8 +41,9 @@ pub struct EpubParseResult {
     pub author: String,
     pub encoding: String,
     pub chapters: Vec<EpubChapter>,
-    /// 图片数据：path -> base64 encoded bytes
-    pub images: std::collections::HashMap<String, String>,
+    /// 图片数据：path -> 原始图片字节（[P1-#2] 不再 base64：bincode 直存原始字节，
+    /// 省去 ~33% 体积放大；值类型在 bincode 线上与原 String 同形（u64 长度 + 字节））
+    pub images: std::collections::HashMap<String, Vec<u8>>,
     /// 目录树（来自 NCX 或 nav.xhtml）
     #[serde(default)]
     pub toc_items: Vec<TocItem>,

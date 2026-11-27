@@ -285,30 +285,36 @@ fn extract_img_src(html_after_tag: &str) -> Option<String> {
     // data-src 分支需要访问 bytes[i+8]，循环条件必须保证 i+8 安全
     while i + 8 < len {
         // 检查是否为独立属性名 src=（前一个字符必须是空白/引号/标签开始，即不在 data- 等前缀后）
-        if (bytes[i] as char == 's' || bytes[i] as char == 'S')
+        // [review-#7] HTML5 optional-equals 语法：src 与 =、= 与引号之间允许空白（如 src = "a.jpg"）
+        let src_name = (bytes[i] as char == 's' || bytes[i] as char == 'S')
             && (bytes[i+1] as char == 'r' || bytes[i+1] as char == 'R')
-            && (bytes[i+2] as char == 'c' || bytes[i+2] as char == 'C')
-            && bytes[i+3] as char == '='
-        {
-            // 向前看：src 前面必须是属性边界（空白、>、引号），不能是 '-'（如 data-src）
-            let prev = if i > 0 { bytes[i-1] as char } else { ' ' };
-            if prev == '-' || prev == ':' || prev.is_ascii_alphanumeric() || prev == '_' {
-                i += 1;
-                continue;
+            && (bytes[i+2] as char == 'c' || bytes[i+2] as char == 'C');
+        if src_name {
+            let mut j = i + 3;
+            while j < len && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') { j += 1; }
+            if j < len && bytes[j] == b'=' {
+                // 向前看：src 前面必须是属性边界，不能是 '-'（如 data-src）
+                let prev = if i > 0 { bytes[i-1] as char } else { ' ' };
+                if prev == '-' || prev == ':' || prev.is_ascii_alphanumeric() || prev == '_' {
+                    i += 1;
+                    continue;
+                }
+                let mut qpos = j + 1;
+                while qpos < len && matches!(bytes[qpos], b' ' | b'\t' | b'\n' | b'\r') { qpos += 1; }
+                let q = *bytes.get(qpos).unwrap_or(&b'_');
+                i = qpos.max(i + 4); // 保证循环进度（qpos 到达串尾 → 下一轮 while 条件为假）
+                if q != b'"' && q != b'\'' { continue; }
+                let start = qpos + 1;
+                let mut end = start;
+                while end < len && (bytes[end] as char) != (q as char) { end += 1; }
+                if end > start && end < len {
+                    let src = std::str::from_utf8(&bytes[start..end]).unwrap_or_default().to_string();
+                    let cleaned = if src.starts_with("./") { src[2..].to_string() } else { src };
+                    // HTML 语义：真正的 src 优先于 data-src，直接返回
+                    return Some(cleaned);
+                }
+                return None;
             }
-            i += 4;
-            let q = bytes[i] as char;
-            if q != '"' && q != '\'' { continue; }
-            let start = i + 1;
-            let mut end = start;
-            while end < len && (bytes[end] as char) != q { end += 1; }
-            if end > start && end < len {
-                let src = std::str::from_utf8(&bytes[start..end]).unwrap_or_default().to_string();
-                let cleaned = if src.starts_with("./") { src[2..].to_string() } else { src };
-                // HTML 语义：真正的 src 优先于 data-src，直接返回
-                return Some(cleaned);
-            }
-            return None;
         }
         // data-src 变体（微信读书源）：仅当没有真正的 src 时才作为兜底
         if (bytes[i] as char == 'd' || bytes[i] as char == 'D')
@@ -657,6 +663,17 @@ mod tests {
         assert_eq!(extract_img_src("<img>"), None);
         assert_eq!(extract_img_src("<img src"), None);
         assert_eq!(extract_img_src(r#"<img data-src="x"/>"#), Some("x".to_string()));
+    }
+
+    #[test]
+    fn test_extract_img_src_whitespace_around_equals() {
+        // [review-#7] HTML5 optional-equals：src 与 = 之间空白不再漏匹配
+        assert_eq!(extract_img_src(r#"<img src = "a.jpg"/>"#), Some("a.jpg".to_string()));
+        assert_eq!(extract_img_src(r#"<img src   =   'b.jpg'/>"#), Some("b.jpg".to_string()));
+        // 边界回归：srcx= 不应误判为 src（j 停在非 = 字符）
+        assert_eq!(extract_img_src(r#"<img srcx="a.jpg"/>"#), None);
+        // 短输入仍安全
+        assert_eq!(extract_img_src("<img src"), None);
     }
 
     #[test]

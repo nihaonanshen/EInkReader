@@ -1,6 +1,5 @@
 package com.einkreader.core
 
-import android.util.Base64
 import android.util.Log
 import com.einkreader.core.Constants
 import com.einkreader.core.model.Chapter
@@ -40,7 +39,7 @@ class NativeBridge {
         }
     }
 
-    // ========== 布局结果 POJO（支持 JSON + 二进制双路径） ==========
+    // ========== 布局结果 POJO（[review-#46] 纯 bincode 二进制路径，旧 JSON 双路径已移除） ==========
 
     /** 单行坐标（由 Rust 计算，Java 直接绘制） */
     class LineMetric {
@@ -66,9 +65,8 @@ class NativeBridge {
         }
     }
 
-    /** 单页数据 */
+    /** 单页数据（[P1-#35/36] 已移除 content 字段：Java 按 LineMetric 逐行绘制，无每页全文消费者） */
     class PageData {
-        var content: String? = null
         var lineCount: Int = 0
         var lines: MutableList<LineMetric> = ArrayList()
     }
@@ -101,15 +99,17 @@ class NativeBridge {
         val paraTypes: IntArray? = null
     ) {
         override fun hashCode(): Int {
+            // [review-#13] Float 字段用 floatToIntBits 全位参与，不再 .toInt() 截断——
+            // 同整部不同小数（100.4 vs 100.9）不再产生系统性哈希碰撞
             var hc = textHash
-            hc = 31 * hc + maxWidthPx.toInt()
-            hc = 31 * hc + maxHeightPx.toInt()
-            hc = 31 * hc + fontSizePx.toInt()
-            hc = 31 * hc + lineSpacing.toInt()
-            hc = 31 * hc + paragraphSpacing.toInt()
+            hc = 31 * hc + java.lang.Float.floatToIntBits(maxWidthPx)
+            hc = 31 * hc + java.lang.Float.floatToIntBits(maxHeightPx)
+            hc = 31 * hc + java.lang.Float.floatToIntBits(fontSizePx)
+            hc = 31 * hc + java.lang.Float.floatToIntBits(lineSpacing)
+            hc = 31 * hc + java.lang.Float.floatToIntBits(paragraphSpacing)
             hc = 31 * hc + if (firstLineIndent) 1 else 0
-            hc = 31 * hc + paddingLeft.toInt()
-            hc = 31 * hc + paddingTop.toInt()
+            hc = 31 * hc + java.lang.Float.floatToIntBits(paddingLeft)
+            hc = 31 * hc + java.lang.Float.floatToIntBits(paddingTop)
             hc = 31 * hc + java.util.Arrays.hashCode(paraTypes)
             return hc
         }
@@ -142,6 +142,10 @@ class NativeBridge {
             }
         }
 
+    /** [P0-#27] 缓存锁：lruCache 被主线程（isLayoutCachedInternal/draw）与阅读后台线程
+     *  （layoutTextBinary）并发访问，accessOrder LinkedHashMap 无同步时 LRU 链会损坏 */
+    private val cacheLock = Any()
+
     // ========== JNI 原生方法声明 ==========
 
     external fun nativeDetectEncoding(data: ByteArray, len: Int): String
@@ -169,7 +173,7 @@ class NativeBridge {
     ): Boolean {
         val key = LayoutKey(text?.hashCode() ?: 0, maxWidthPx, maxHeightPx, fontSizePx,
                 lineSpacing, paragraphSpacing, firstLineIndent, paddingLeft, paddingTop, paraTypes)
-        return lruCache.containsKey(key)
+        return synchronized(cacheLock) { lruCache.containsKey(key) }
     }
 
     // ========== 编码检测（带 fallback） ==========
@@ -255,7 +259,7 @@ class NativeBridge {
         }
     }
 
-    // 🔥 批量布局（JSON版）— texts: JSON array of strings, params: JSON object
+    // 批量布局（[review-#46] bincode 版 — 输入输出均为 bincode 字节流，过期 JSON 注释已清理）
     /**
      * 批量布局（bincode 版）：对多个文本段应用相同参数，返回解析后的 List<LayoutResult>
      */
@@ -319,7 +323,7 @@ class NativeBridge {
         if (data == null || data.isEmpty()) return results
         try {
             val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-            val count = bb.long.toInt()
+            val count = readBincodeCount(bb, "batchCount")
             for (i in 0 until count) {
                 results.add(parseSingleLayoutBinary(bb))
             }
@@ -332,13 +336,13 @@ class NativeBridge {
     /** 从 ByteBuffer 当前位置解析单个 LayoutResult（bincode 单元素格式） */
     private fun parseSingleLayoutBinary(bb: ByteBuffer): LayoutResult {
         val result = LayoutResult()
-        val pageCount = bb.long.toInt()
+        val pageCount = readBincodeCount(bb, "pageCount")
         result.pages = ArrayList(pageCount)
         for (pi in 0 until pageCount) {
+            // [P1-#35/36] 与 Rust PageData 对齐：content 字段已移除（不再逐页回传全文）
             val pd = PageData()
-            pd.content = readBincodeString(bb)
             pd.lineCount = bb.long.toInt()   // line_count 字段
-            val lineCount = bb.long.toInt()  // Vec<LineMetric> 长度（必须消费，否则指针错位）
+            val lineCount = readBincodeCount(bb, "lineCount")  // Vec<LineMetric> 长度（必须消费，否则指针错位）
             pd.lines = ArrayList(lineCount)
             for (li in 0 until lineCount) {
                 val lm = LineMetric()
@@ -377,9 +381,25 @@ class NativeBridge {
     private fun readBincodeString(bb: ByteBuffer): String {
         val byteLen = bb.long.toInt()
         if (byteLen == 0) return ""
+        // [P0-#12] 负数 / 超 remaining 的长度都是截断或损坏的字节流：原代码直接
+        // 用负数（按无符号理解即巨大值）分配 ByteArray → OOM / 崩溃
+        if (byteLen < 0 || byteLen > bb.remaining()) {
+            throw java.io.IOException(
+                "Truncated bincode payload: string len=$byteLen, remaining=${bb.remaining()}")
+        }
         val strBytes = ByteArray(byteLen)
         bb.get(strBytes)
         return String(strBytes, StandardCharsets.UTF_8)
+    }
+
+    /** [P0-#12] 带范围检查地读取 bincode u64 计数前缀：
+     *  负数或超过 remaining 的计数视为截断字节流（每个元素至少消耗 1 字节） */
+    private fun readBincodeCount(bb: ByteBuffer, what: String): Int {
+        val v = bb.long.toInt()
+        if (v < 0 || v > bb.remaining()) {
+            throw java.io.IOException("Truncated bincode payload: $what=$v, remaining=${bb.remaining()}")
+        }
+        return v
     }
 
     /** 读取 bincode 中的 Option<String> (tag: 0=None, 1=Some) */
@@ -394,7 +414,7 @@ class NativeBridge {
         val item = TocItem()
         item.title = readBincodeString(bb)
         item.href = readBincodeString(bb)
-        val childrenCount = bb.long.toInt()
+        val childrenCount = readBincodeCount(bb, "tocChildren")
         item.children = ArrayList(childrenCount)
         for (j in 0 until childrenCount) {
             item.children.add(readTocItem(bb))
@@ -413,16 +433,23 @@ class NativeBridge {
     fun parseTxtBinary(data: ByteArray?, file: File): TxtParser.ParseResult {
         val result = TxtParser.ParseResult()
         if (data == null || data.isEmpty()) return result
-        if (data[0].toInt() == 1) {
+        // [P0-#1] 显式状态字节协议：data[0]=0 成功（其余为 bincode payload）；=1 错误（其余为 UTF-8 消息）。
+        // 旧版以整个字节流首字节是否为 1 判错，合法 payload 首字节恰好为 1 时会被误判
+        val status = data[0].toInt()
+        if (status == 1) {
             val errMsg = try { String(data.copyOfRange(1, data.size), StandardCharsets.UTF_8) } catch (e: Exception) { "Unknown error" }
             Log.w(TAG, "Rust TXT binary parser error: $errMsg")
             return result
         }
+        if (status != 0) {
+            Log.w(TAG, "Rust TXT binary result: unexpected status byte $status")
+            return result
+        }
         try {
-            val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+            val bb = ByteBuffer.wrap(data, 1, data.size - 1).order(ByteOrder.LITTLE_ENDIAN)
             result.bookTitle = readBincodeString(bb)
             result.encoding = readBincodeString(bb)
-            val chapterCount = bb.long.toInt()
+            val chapterCount = readBincodeCount(bb, "chapterCount")
             result.chapters = ArrayList(chapterCount)
             for (i in 0 until chapterCount) {
                 val title = readBincodeString(bb)
@@ -444,25 +471,31 @@ class NativeBridge {
     fun parseEpubBinary(data: ByteArray?, file: File): EpubResult {
         val result = EpubResult()
         if (data == null || data.isEmpty()) return result
-        if (data[0].toInt() == 1) {
+        // [P0-#1] 显式状态字节协议：data[0]=0 成功（其余为 bincode payload）；=1 错误（其余为 UTF-8 消息）
+        val status = data[0].toInt()
+        if (status == 1) {
             val errMsg = try { String(data.copyOfRange(1, data.size), StandardCharsets.UTF_8) } catch (e: Exception) { "Unknown error" }
             Log.w(TAG, "Rust EPUB binary parser error: $errMsg")
             return result
         }
+        if (status != 0) {
+            Log.w(TAG, "Rust EPUB binary result: unexpected status byte $status")
+            return result
+        }
         try {
-            val bb = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
+            val bb = ByteBuffer.wrap(data, 1, data.size - 1).order(ByteOrder.LITTLE_ENDIAN)
             result.title = readBincodeString(bb)
             result.author = readBincodeString(bb)
             result.encoding = readBincodeString(bb)
-            val chapterCount = bb.long.toInt()
+            val chapterCount = readBincodeCount(bb, "chapterCount")
             result.chapters = ArrayList(chapterCount)
             for (i in 0 until chapterCount) {
                 val title = readBincodeString(bb)
                 val content = readOptionalBincodeString(bb) ?: ""
-                val imageCount = bb.long.toInt()
+                val imageCount = readBincodeCount(bb, "imageCount")
                 val imagePaths = ArrayList<String>(imageCount)
                 for (j in 0 until imageCount) { imagePaths.add(readBincodeString(bb)) }
-                val paraTypeCount = bb.long.toInt()
+                val paraTypeCount = readBincodeCount(bb, "paraTypeCount")
                 val paragraphTypes = ArrayList<Int>(paraTypeCount)
                 // Rust 侧为 Vec<i32>：每元素 4 字节，必须用 bb.int 读取（原 bb.long 8 字节导致后续章节全部错位）
                 for (j in 0 until paraTypeCount) { paragraphTypes.add(bb.int) }
@@ -474,15 +507,19 @@ class NativeBridge {
                 chapter.setParagraphTypes(paragraphTypes)
                 result.chapters.add(chapter)
             }
-            val imageMapCount = bb.long.toInt()
+            // [P1-#2] imageMap: HashMap<String, Vec<u8>>（原始字节，不再 base64）——
+            // bincode 线上值与原 String 同形（u64 长度 + 字节），此处直接读字节
+            val imageMapCount = readBincodeCount(bb, "imageMapCount")
             result.images.clear()
             for (i in 0 until imageMapCount) {
                 val key = readBincodeString(bb)
-                val value = readBincodeString(bb)
-                result.images[key] = Base64.decode(value, Base64.DEFAULT)
+                val len = readBincodeCount(bb, "imageBytes")
+                val bytes = ByteArray(len)
+                bb.get(bytes)
+                result.images[key] = bytes
             }
             // 解析目录树：Vec<TocItem>（递归支持多级嵌套）
-            val tocItemCount = bb.long.toInt()
+            val tocItemCount = readBincodeCount(bb, "tocItemCount")
             result.tocItems = ArrayList(tocItemCount)
             for (i in 0 until tocItemCount) {
                 result.tocItems.add(readTocItem(bb))
@@ -573,7 +610,7 @@ class NativeBridge {
         br.tag = "LayoutBench"
         br.javaNs = 0
 
-        synchronized(this@NativeBridge) { lruCache.clear() }
+        synchronized(cacheLock) { lruCache.clear() }
         val start2 = System.nanoTime()
         val r2 = layoutTextBinary(text, width.toFloat(), height.toFloat(),
                 fontSize, lineSpacing, paragraphSpacing, indent, paddingLeft, paddingTop)
@@ -586,7 +623,7 @@ class NativeBridge {
 
     // ========== 缓存私有方法 ==========
 
-    private fun cacheGet(key: LayoutKey): LayoutResult? = lruCache[key]
-    private fun cachePut(key: LayoutKey, result: LayoutResult) { lruCache[key] = result }
+    private fun cacheGet(key: LayoutKey): LayoutResult? = synchronized(cacheLock) { lruCache[key] }
+    private fun cachePut(key: LayoutKey, result: LayoutResult) { synchronized(cacheLock) { lruCache[key] = result } }
 }
 

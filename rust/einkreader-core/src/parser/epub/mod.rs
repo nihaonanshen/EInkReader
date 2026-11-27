@@ -27,7 +27,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
-use base64::{engine::general_purpose::STANDARD, Engine};
+// [P1-#2] base64 导入移除：EpubParseResult.images 改存原始字节（HashMap<String, Vec<u8>>）
 
 use crate::types::{EpubChapter, EpubParseResult};
 
@@ -181,13 +181,13 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
     // 5. 提取图片字节（遍历章节引用的图片路径，而非 manifest——保证 key 与
     //    [[IMAGE:path]] 标记一致；JPEG 等二进制数据用字节读取，不能 read_to_string）
     // 上限：单图 1MB（防单图解码 OOM），总图 16MB。
-    // [P1 Nook] 原 64MB（覆盖《全球通史》41MB 插图书）：base64 膨胀 ~25% → ~85MB byte[]
+    // [P1 Nook] 原 64MB（覆盖《全球通史》41MB 插图书）：[P1-#2] 现存原始字节，无 base64 膨胀
     // 驻留整个阅读会话，Dalvik 256MB growthlimit（Nook i.MX6）下 OOM 风险高；
     // 16MB 二进制 → ~21MB b64，可控。代价：《全球通史》等插图书超过 16MB 的图片会被跳过
     //（用户已接受：正文可读优先，插图书牺牲后半部分图片）。
     const MAX_IMAGE_BYTES: u64 = 1 * 1024 * 1024;
     const MAX_TOTAL_IMAGE_BYTES: u64 = 16 * 1024 * 1024;
-    let mut images: HashMap<String, String> = HashMap::new();
+    let mut images: HashMap<String, Vec<u8>> = HashMap::new();
     let mut all_image_paths: Vec<String> = Vec::new();
     let mut seen_images: std::collections::HashSet<String> = std::collections::HashSet::new();
     // 封面图单独入 map（key 固定为 "__cover__"，供书架显示）
@@ -204,7 +204,8 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
         // 使用统一的图片查找函数
         if let Some((_name, bytes)) = find_image_entry(&mut archive, &cover_path) {
             if !bytes.is_empty() && (bytes.len() as u64) <= MAX_IMAGE_BYTES {
-                images.insert(COVER_KEY.to_string(), STANDARD.encode(&bytes));
+                // [P1-#2] 存原始字节（原为 STANDARD.encode(&bytes) 的 base64）
+                images.insert(COVER_KEY.to_string(), bytes);
             }
         }
     }
@@ -234,7 +235,8 @@ pub fn parse_epub(file_path: &str) -> Result<EpubParseResult, String> {
                 eprintln!("图片总字节已达上限，跳过: {}", path);
                 continue;
             }
-            images.insert(path.clone(), STANDARD.encode(&bytes));
+            // [P1-#2] 存原始字节（原为 STANDARD.encode(&bytes) 的 base64）
+            images.insert(path.clone(), bytes);
             total_image_bytes += len;
         }
     }
@@ -368,20 +370,15 @@ mod tests {
         assert_eq!(result.images.len(), 2, "应有章节图 + __cover__ 封面，got {:?}", result.images.keys());
         // 封面：manifest properties="cover-image" → images["__cover__"]
         let cover = result.images.get("__cover__").expect("应有 __cover__ 封面");
-        let cover_decoded = base64::engine::general_purpose::STANDARD
-            .decode(cover)
-            .expect("封面 base64 应可解码");
-        assert_eq!(cover_decoded, jpeg, "封面字节应与原图一致");
-        let (key, b64) = result.images
+        // [P1-#2] 值为原始字节（非 base64），直接断言等于原图
+        assert_eq!(cover, &jpeg, "封面应存原始字节，与原图一致");
+        let (key, img) = result.images
             .iter()
             .find(|(k, _)| k.as_str() == "Images/pic.jpeg")
             .expect("应有 Images/pic.jpeg");
         assert_eq!(key, "Images/pic.jpeg");
-        // base64 解码回原字节
-        let decoded = base64::engine::general_purpose::STANDARD
-            .decode(b64)
-            .expect("base64 应可解码");
-        assert_eq!(decoded, jpeg, "图片字节应完整往返");
+        // [P1-#2] 值为原始字节（非 base64），直接断言等于原图
+        assert_eq!(img, &jpeg, "图片原始字节应完整往返");
 
         // 章节标记与 image_paths
         assert_eq!(result.chapters.len(), 1);

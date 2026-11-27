@@ -108,14 +108,13 @@ class ReaderRepositoryImpl(
 
         var savedChapter = 0
         var savedPage = 0
+        // [P1-#25] 进度读取单轨化：仅 DB。旧"DB 未命中 → prefs lc_/lp_ 回退"删除——
+        // saveProgress 已不写 prefs，回退只会读到过期旧数据；legacy 只读保留在 loadProgress
         bookStorage?.loadProgress(fileKey)?.let { prog ->
             if (prog.chapterIndex < chapters.size) {
                 savedChapter = prog.chapterIndex
                 savedPage = prog.pageIndex
             }
-        } ?: run {
-            savedChapter = prefs.getInt("lc_$fileKey", 0)
-            savedPage = prefs.getInt("lp_$fileKey", 0)
         }
 
         if (savedChapter < 0 || savedChapter >= chapters.size) {
@@ -126,12 +125,9 @@ class ReaderRepositoryImpl(
     }
 
     override fun saveProgress(fileKey: String, chapterIndex: Int, pageIndex: Int, totalChapters: Int) {
+        // [P1-#25] 进度写入单轨化：只写 DB（BookStorage）。旧 prefs 双写
+        // （lc_/lp_/total_ch_）已删除——prefs 降为 legacy 只读，新数据不再进 prefs
         if (fileKey == null) return
-        prefs.edit().apply {
-            putInt("lc_$fileKey", chapterIndex)
-            putInt("lp_$fileKey", pageIndex)
-            putInt("total_ch_$fileKey", totalChapters)
-        }.apply()
         bookStorage?.saveProgress(BookStorage.BookProgress().apply {
             this.fileKey = fileKey
             this.chapterIndex = chapterIndex
@@ -141,6 +137,8 @@ class ReaderRepositoryImpl(
         })
     }
 
+    // [P1-#25] prefs 通道为 legacy 只读（单轨化前的旧数据；total_ch_ 不再被写入，
+    // 仅在已存在时读到）——新增数据一律经 saveProgress 写 DB
     override fun loadProgress(fileKey: String): BookStorage.BookProgress? {
         if (fileKey == null) return null
         bookStorage?.loadProgress(fileKey)?.let { return it }
@@ -156,37 +154,74 @@ class ReaderRepositoryImpl(
         return null
     }
 
+    // [P1-#25] 书签迁移 DB（BookStorage.bookmarks 表，PK 去重）；legacy bookmarks_ prefs
+    // 降为只读合并（旧数据仍可查可跳转，不再新写）
     override fun addBookmark(fileKey: String, chapterIndex: Int, pageIndex: Int, chapterTitle: String?) {
         if (fileKey == null) return
+        val bs = bookStorage
+        if (bs != null) {
+            bs.addBookmark(BookStorage.BookBookmark().apply {
+                this.fileKey = fileKey
+                this.chapterIndex = chapterIndex
+                this.pageIndex = pageIndex
+                this.chapterTitle = chapterTitle ?: ""
+                createdAt = System.currentTimeMillis()
+            })
+            return
+        }
+        // bookStorage 不可用（理论不应发生）时兜底 legacy prefs，保证功能不丢
         val key = "$chapterIndex" + "_" + pageIndex
         val value = (chapterTitle ?: "") + " P" + pageIndex
         bmPrefs(fileKey).edit().putString(key, value).apply()
     }
 
-    override fun loadBookmarks(fileKey: String): List<String> {
-        val list = JArrayList<String>()
+    /** [P1-#25] 合并书签键：DB 书签 + legacy prefs 只读去重，按章/页排序（面板顺序与跳转一致） */
+    private fun mergedBookmarkPairs(fileKey: String): List<Pair<Int, Int>> {
+        val pairs = LinkedHashSet<Pair<Int, Int>>()
+        bookStorage?.listBookmarks(fileKey)?.forEach { b -> pairs.add(b.chapterIndex to b.pageIndex) }
         try {
-            // getAll() 返回 HashMap，顺序不稳定 → 按 key 排序保证书签面板顺序与跳转一致
-            val keys = bmPrefs(fileKey).getAll().keys.sorted()
-            for (k in keys) list.add("$k : ${bmPrefs(fileKey).getString(k, "")}")
-        } catch (e: Exception) { Log.e(TAG, "loadBookmarks failed", e) }
+            bmPrefs(fileKey).getAll().keys.forEach { k ->
+                val ch = k.substringBefore("_", "0").toIntOrNull()
+                val pg = k.substringAfter("_", "0").toIntOrNull()
+                if (ch != null && pg != null) pairs.add(ch to pg)
+            }
+        } catch (e: Exception) { Log.e(TAG, "legacy bookmark read failed", e) }
+        return pairs.sortedWith(compareBy({ it.first }, { it.second }))
+    }
+
+    override fun loadBookmarks(fileKey: String): List<String> {
+        // [P1-#25] DB 优先 + legacy prefs 只读合并（新数据不再写入 prefs）
+        val dbTitles = HashMap<String, String>()
+        bookStorage?.listBookmarks(fileKey)?.forEach { b ->
+            dbTitles["${b.chapterIndex}_${b.pageIndex}"] = b.chapterTitle + " P" + b.pageIndex
+        }
+        val legacyVals = HashMap<String, String>()
+        try {
+            bmPrefs(fileKey).getAll().forEach { (k, v) -> legacyVals[k] = v?.toString() ?: "" }
+        } catch (e: Exception) { Log.e(TAG, "loadBookmarks legacy read failed", e) }
+        val list = JArrayList<String>()
+        mergedBookmarkPairs(fileKey).forEach { (ch, pg) ->
+            val key = ch.toString() + "_" + pg
+            val display = dbTitles[key] ?: legacyVals[key] ?: (ch.toString() + " P" + pg)
+            list.add("$key : $display")
+        }
         return list
     }
 
     override fun jumpToBookmark(fileKey: String, bookmarkIndex: Int, totalChapters: Int): Int {
         return try {
-            val keys = bmPrefs(fileKey).getAll().keys.sorted()
-            if (bookmarkIndex in keys.indices) keys[bookmarkIndex].substringBefore("_", keys[bookmarkIndex]).toInt()
+            val pairs = mergedBookmarkPairs(fileKey)
+            if (bookmarkIndex in pairs.indices) pairs[bookmarkIndex].first
             else 0
         } catch (e: Exception) { Log.e(TAG, "jumpToBookmark failed", e); 0 }
     }
 
     override fun bookmarkPage(fileKey: String, bookmarkIndex: Int): Int {
-        // 书签 key 形如 chapterIndex_pageIndex（见 addBookmark）
+        // [P1-#25] 合并书签键（DB + legacy，见 mergedBookmarkPairs）
         return try {
-            val keys = bmPrefs(fileKey).getAll().keys.sorted()
-            if (bookmarkIndex !in keys.indices) return -1
-            keys[bookmarkIndex].substringAfter("_", "").toIntOrNull() ?: -1
+            val pairs = mergedBookmarkPairs(fileKey)
+            if (bookmarkIndex !in pairs.indices) return -1
+            pairs[bookmarkIndex].second
         } catch (e: Exception) { Log.e(TAG, "bookmarkPage failed", e); -1 }
     }
 

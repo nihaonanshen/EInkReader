@@ -284,7 +284,7 @@ class ReaderView : View {
         val v = blackLevel.coerceIn(0, 100)
         if (v == this.textBlackLevel) return
         this.textBlackLevel = v
-        // gray = 255 - 黑度比例，clamp 到 [30,255]（0=纯黑，避免调到纯白）
+        // gray = 255 - 黑度比例，clamp 到 [30,255]（v=100 → g=0 纯黑；v=0 → g=255 被钳到 30，即最浅灰，避免纯白）
         val g = (255 - v * 255 / 100).coerceIn(30, 255)
         fgColor = Color.rgb(g, g, g)
         textPaint!!.setColor(fgColor)
@@ -538,6 +538,7 @@ class ReaderView : View {
                             2 -> ts * 1.5f
                             3 -> ts * 1.2f
                             4 -> ts * 0.9f
+                            5 -> ts // [P1-#26] PARA_IMAGE：图片标记段用正文字号（与 Rust 侧 body 样式一致，非加粗）
                             else -> ts
                         }
                         val pBold = (pt == 1 || pt == 2 || pt == 3)
@@ -561,6 +562,9 @@ class ReaderView : View {
                 val total = rustPages.size
                 val fp = pageFingerprint
                 val fVersion = version
+                // [review-#28] 布局状态（pages/totalPages）主线程唯一提交点：
+                // 后台布局线程只产出局部结果 rustPages，不直接写布局字段；
+                // 此 post 回主线程 + fVersion 校验是既有安全边界，后续改动勿绕过
                 mainHandler.post(object : Runnable {
                     override fun run() {
                         if (fVersion != layoutVersion) return
@@ -669,6 +673,10 @@ class ReaderView : View {
                 }
 
                 Chapter.PARA_BLOCKQUOTE -> paraTS = ts * 0.9f
+
+                Chapter.PARA_IMAGE -> {
+                    // [P1-#26] 图片标记段（[[IMAGE:xxx]]）：保持正文样式，下方按占位标记绘制
+                }
             }
 
             bp.setTextSize(paraTS * dens)
@@ -819,7 +827,8 @@ class ReaderView : View {
         val fp = pageFingerprint
         val fVersion = version
 
-        // post 回主线程
+        // [review-#28] 主线程唯一提交点（同 Rust 路径注释）：布局字段只在此 post 内写，
+        // 后台线程仅产出 resultPages 局部结果
         mainHandler.post(object : Runnable {
             override fun run() {
                 if (fVersion != layoutVersion) return

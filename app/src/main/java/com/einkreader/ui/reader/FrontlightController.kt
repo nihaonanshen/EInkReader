@@ -1,5 +1,7 @@
 package com.einkreader.ui.reader
 
+import android.content.Context
+import android.content.SharedPreferences
 import kotlin.jvm.Volatile
 
 /**
@@ -25,6 +27,25 @@ object FrontlightController {
     @Volatile
     var brightness: Int = 50
 
+    // [review-#31] 前光亮度持久化（eink_reader_prefs.frontlight_brightness）：
+    // 旧实现每次进阅读界面 brightness 重置 50，用户上次的亮度丢失
+    @Volatile
+    private var appContext: Context? = null
+
+    /** [review-#31] 在 ReaderActivity onCreate 早期调用：绑定 appContext + 回读持久化亮度 */
+    fun init(context: Context) {
+        appContext = context.applicationContext
+        brightness = context.applicationContext
+            .getSharedPreferences("eink_reader_prefs", Context.MODE_PRIVATE)
+            .getInt("frontlight_brightness", brightness)
+    }
+
+    /** [review-#31] 写 sysfs 成功后同步持久化（后台线程，prefs 写入量极小） */
+    private fun persist(value: Int) {
+        appContext?.getSharedPreferences("eink_reader_prefs", Context.MODE_PRIVATE)
+            ?.edit()?.putInt("frontlight_brightness", value)?.apply()
+    }
+
     // [P3] 常驻 su 管道句柄（非线程安全，统一在 synchronized(this) 内访问）
     @Volatile
     private var suProcess: java.lang.Process? = null
@@ -43,6 +64,8 @@ object FrontlightController {
             if (value != null) {
                 brightness = value.coerceIn(0, 100)
                 DebugLog.log("Brightness", "readFrontlight sysfs=$value")
+                // [review-#31] 真实读到的 sysfs 值为准并持久化（比 prefs 旧值新）
+                persist(brightness)
                 onRead(brightness)
             }
         }).start()
@@ -55,6 +78,8 @@ object FrontlightController {
     fun set(value: Int) {
         val v = value.coerceIn(0, 100)
         brightness = v
+        // [review-#31] 用户显式调光即持久化
+        persist(v)
         Thread(Runnable {
             if (!tryPipe("echo $v > $BRIGHTNESS_PATH")) {
                 execOneShot("echo $v > $BRIGHTNESS_PATH")

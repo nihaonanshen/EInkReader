@@ -22,10 +22,10 @@ pub struct LayoutResult {
 }
 
 /// 单页数据
+/// [P1-#35/36] 移除 content 字段：Java 侧按 LineMetric（text+坐标）逐行绘制，
+/// 每页全文只是额外内存（整章文本逐页重复）+ 额外 bincode 字节，无消费者
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PageData {
-    /// 页面内容，行与行之间用 \n 分隔（兼容旧版）
-    pub content: String,
     /// 该页包含的行数
     pub line_count: usize,
     /// 精确行指标（包含坐标，Java 直接使用）
@@ -42,7 +42,7 @@ pub struct LineMetric {
     pub height: f32,
     pub is_paragraph_end: bool,
     pub is_first_in_paragraph: bool,
-    /// 段落样式类型（与 Java Chapter.PARA_* 一致：0 正文 1 H1 2 H2 3 H3 4 引文）。
+    /// 段落样式类型（与 Java Chapter.PARA_* 一致：0 正文 1 H1 2 H2 3 H3 4 引文 5 图片标记段 [P1-#26]）。
     /// Java 绘制端据此套用字号倍数/伪粗体；x 坐标已按样式居中/缩进计算。
     pub para_type: i32,
 }
@@ -59,6 +59,16 @@ fn char_width_em(c: char) -> f32 {
         '\u{FF01}'..='\u{FF60}' | '\u{3000}'..='\u{303F}' | '\u{FE30}'..='\u{FE4F}' => 1.0,
         '\u{200B}'..='\u{200F}' | '\u{FEFF}' | '\u{2060}' => 0.0,
         _ => 0.5,
+    }
+}
+
+/// 空布局结果（参数校验失败 / 提前返回；Kotlin 端将空结果视为 Rust 布局失败）
+fn empty_layout_result() -> LayoutResult {
+    LayoutResult {
+        pages: Vec::new(),
+        total_lines: 0,
+        total_pages: 0,
+        elapsed_ns: 0,
     }
 }
 
@@ -81,16 +91,27 @@ pub fn layout_text(
 ) -> LayoutResult {
     let start = Instant::now();
 
-    if max_width_px <= 0.0 || max_height_px <= 0.0 || font_size_px <= 0.0 || text.is_empty() {
-        return LayoutResult {
-            pages: Vec::new(),
-            total_lines: 0,
-            total_pages: 0,
-            elapsed_ns: 0,
-        };
+    // [P0-#9] 参数健全性检查：NaN/Inf 或非正几何直接返回空布局（调用方回退 Java 布局）。
+    // 原检查只有 <= 0：NaN 与任何值比较恒为 false，会流入热循环使 break 条件恒不成立、
+    // 行高变 NaN → 单行无限累积或坐标溢出
+    if !max_width_px.is_finite() || !max_height_px.is_finite() || !font_size_px.is_finite()
+        || !line_spacing.is_finite()
+        || !paragraph_spacing.is_finite()
+        || !padding_left.is_finite()
+        || !padding_top.is_finite()
+        || max_width_px <= 0.0
+        || max_height_px <= 0.0
+        || font_size_px <= 0.0
+        || text.is_empty()
+    {
+        return empty_layout_result();
     }
 
     let content_width = max_width_px - padding_left;
+    // [P0-#9] content_width 非正（padding_left >= max_width_px）→ 几何非法，返回空布局
+    if content_width <= 0.0 {
+        return empty_layout_result();
+    }
     // 行高按段落样式逐行计算（FlattenedLine.line_h），段距 = 字体大小 × 段距倍数（独立于行距）
     let para_extra = font_size_px * paragraph_spacing.max(0.0);
     // ========== 第一步：按 \n 拆分为段落 ==========
@@ -122,13 +143,15 @@ pub fn layout_text(
 
         // [P1-2/P2-6] 段落样式（与 Java 路径 ReaderView:622-643 对齐）：
         // H1 字号×1.8/行距1.2/段距×1.5/居中粗体；H2 ×1.5/段距×1.2/粗体；
-        // H3 ×1.2/粗体；引文 ×0.9/左右缩进 2em
+        // H3 ×1.2/粗体；引文 ×0.9/左右缩进 2em；[P1-#26] 图片标记段(5) 正文样式
+        // [P1-#10] para_types 长度不匹配 / 缺失 → unwrap_or 回退 0（正文），不会越界 panic
         let ptype = para_types.get(pi).copied().unwrap_or(0);
         let (font_mult, ls_ovr, side_indent, centered): (f32, Option<f32>, f32, bool) = match ptype {
             1 => (1.8_f32, Some(1.2_f32), 0.0_f32, true),
             2 => (1.5_f32, None, 0.0_f32, false),
             3 => (1.2_f32, None, 0.0_f32, false),
             4 => (0.9_f32, None, font_size_px * 2.0_f32, false),
+            5 => (1.0_f32, None, 0.0_f32, false),
             _ => (1.0_f32, None, 0.0_f32, false),
         };
         let p_font = font_size_px * font_mult;
@@ -138,7 +161,9 @@ pub fn layout_text(
         };
         // 首行缩进与 Java 对齐：仅正文段落缩进 1em（原 1.6em 且全段落）
         let p_indent = if first_line_indent && ptype == 0 { p_font } else { 0.0 };
-        let avail_w = content_width - side_indent * 2.0_f32;
+        // [P0-#9] avail_w 下限保护：大引文缩进（2em×2）可能使 content_width 非正 →
+        // 换行条件恒真、x 坐标为负。钳制最小 1px
+        let avail_w = (content_width - side_indent * 2.0_f32).max(1.0);
         let x_base = padding_left + side_indent;
         // [P2-2] 行字节容量 ≈ 每行字符数 × 3（UTF-8 CJK 3 字节上限），
         // 替代原「每行都预分配整段字节数」的过度分配（单核 Nook 热循环分配削减）
@@ -163,7 +188,10 @@ pub fn layout_text(
                 } else {
                     x_base + current_indent
                 };
-                // Save current line and reset builder using mem::replace (avoids clone)
+                // Save current line and reset builder using mem::replace (avoids clone).
+                // [review-#34] 每次换行仍需为下一行重新分配：行字符串是 owned 并 push 进
+                // flat_lines，无法复用单一 buffer；容量按 line_cap（≈每行字节数）钳制，
+                // 已是最小分配，接受现状不做进一步优化
                 let line_text = std::mem::replace(&mut line_builder, String::with_capacity(line_cap.min(para.len())));
                 flat_lines.push(FlattenedLine {
                     text: line_text,
@@ -208,23 +236,15 @@ pub fn layout_text(
                 line_h: p_line_h,
             });
             line_height_count += 1;
-        } else if !flat_lines.is_empty() && para.len() != 0 {
-            flat_lines.push(FlattenedLine {
-                text: String::new(),
-                x: x_base,
-                width: 0.0,
-                is_paragraph_end: true,
-                is_first_in_paragraph: is_first_line_in_para,
-                para_type: ptype,
-                line_h: p_line_h,
-            });
-            line_height_count += 1;
         }
+        // [P1-#11] 移除原 else-if 死分支（!flat_lines.is_empty() && para.len() != 0）：
+        // 到达此处时 para 非空（空 para 已在循环头部 continue）→ 上方 chars() 循环
+        // 必向 line_builder 推入字符 → line_builder.is_empty() 恒假，该分支不可达
     }
 
     // ========== 第三步：按高度分页，构建 LineMetric ==========
     let mut pages: Vec<PageData> = Vec::new();
-    let mut page_builder = String::new();
+    // [P1-#35/36] page_builder 移除（content 字段已删）
     let mut page_metrics: Vec<LineMetric> = Vec::new();
     let mut page_line_count = 0usize;
     let mut page_height = 0.0_f32;
@@ -248,7 +268,6 @@ pub fn layout_text(
         if page_height + effective_height > max_height_px && page_line_count > 0 {
             // [P2-2] mem::take 零拷贝移交（原 clone 后 clear：每页边界深拷贝全部行指标）
             pages.push(PageData {
-                content: std::mem::take(&mut page_builder),
                 line_count: page_line_count,
                 lines: std::mem::take(&mut page_metrics),
             });
@@ -256,10 +275,6 @@ pub fn layout_text(
             page_line_count = 0;
             // 不回退 line_index，继续处理当前行
         } else {
-            if page_line_count > 0 {
-                page_builder.push('\n');
-            }
-            page_builder.push_str(&line.text);
             page_metrics.push(LineMetric {
                 text: line.text.clone(),
                 x: line.x,
@@ -279,7 +294,6 @@ pub fn layout_text(
     // 最后一页
     if page_line_count > 0 {
         pages.push(PageData {
-            content: page_builder,
             line_count: page_line_count,
             lines: page_metrics,
         });
@@ -457,5 +471,44 @@ mod tests {
                 assert!(lines[i].y > lines[i-1].y, "y should be monotonic increasing");
             }
         }
+    }
+
+    // [P0-#9] 回归：NaN/Inf 参数必须被拒绝（原检查对 NaN 无效）
+    #[test]
+    fn test_nan_or_inf_params_rejected() {
+        let r = layout_text("测试", &[], f32::NAN, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        assert_eq!(r.total_pages, 0);
+        let r = layout_text("测试", &[], 200.0, 400.0, f32::INFINITY, 1.5, 1.8, false, 10.0, 10.0);
+        assert_eq!(r.total_pages, 0);
+        let r = layout_text("测试", &[], 200.0, f32::NEG_INFINITY, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        assert_eq!(r.total_pages, 0);
+    }
+
+    // [P0-#9] 回归：padding_left >= max_width → content_width 非正 → 空布局
+    #[test]
+    fn test_padding_eats_full_width_rejected() {
+        let r = layout_text("测试\n第二段", &[], 100.0, 400.0, 16.0, 1.5, 1.8, false, 100.0, 10.0);
+        assert_eq!(r.total_pages, 0);
+        assert_eq!(r.total_lines, 0);
+    }
+
+    // [P1-#10] 回归：para_types 长度不匹配 / 溢出 → unwrap_or 回退 0，不 panic，
+    // 且样式缺失不影响总行数
+    #[test]
+    fn test_para_types_mismatch_safe() {
+        let text = "第一行文字\n第二行文字\n第三行文字";
+        let r_short = layout_text(text, &[1, 2], 300.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        assert!(r_short.total_pages > 0, "布局不应为空");
+        let r_long = layout_text(text, &[1, 2, 3, 4, 5], 300.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        assert_eq!(r_short.total_lines, r_long.total_lines, "para_types 不匹配不应改变总行数");
+    }
+
+    // [P1-#26] PARA_IMAGE(5) 图片标记段回退正文样式（行高/总行数与正文一致）
+    #[test]
+    fn test_para_image_style_falls_to_body() {
+        let text = "普通段落文本\n图片标记段";
+        let r_body = layout_text(text, &[], 300.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        let r_img = layout_text(text, &[0, 5], 300.0, 400.0, 16.0, 1.5, 1.8, false, 10.0, 10.0);
+        assert_eq!(r_body.total_lines, r_img.total_lines, "图片标记段按正文行高，总行数不变");
     }
 }

@@ -31,4 +31,17 @@ interface BookStorage {
     fun loadProgress(fileKey: String): BookProgress?
     fun addReadTime(fileKey: String, deltaMs: Long)
     fun getTotalReadTime(): Long
+
+    // [P1-#25] 书签 DB 存储（自 repo 层 legacy bookmarks_ prefs 迁入）
+    fun addBookmark(bm: BookBookmark)
+    fun listBookmarks(fileKey: String): List<BookBookmark>
+    fun deleteBookmark(fileKey: String, chapterIndex: Int, pageIndex: Int)
+
+    class BookBookmark {
+        @JvmField var fileKey: String = ""
+        @JvmField var chapterIndex: Int = 0
+        @JvmField var pageIndex: Int = 0
+        @JvmField var chapterTitle: String = ""
+        @JvmField var createdAt: Long = 0L
+    }
 }

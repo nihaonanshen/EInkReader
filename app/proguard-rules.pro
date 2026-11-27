@@ -24,3 +24,11 @@
 # --- 第三方库 ---
 -dontwarn org.json.**
 -dontwarn com.einkreader.**
+
+# --- [review-#44] bincode 数据载体类防御性 keep ---
+# 数据经 byte[] 手工解析，JNI 侧 find_class/反射零命中，重命名本不致坏；
+# keep 仅为未来 JNI 侧按名引用这些类时的保险
+-keep class com.einkreader.core.NativeBridge$LayoutResult { *; }
+-keep class com.einkreader.core.NativeBridge$PageData { *; }
+-keep class com.einkreader.core.NativeBridge$LineMetric { *; }
+-keep class com.einkreader.core.model.TocItem { *; }

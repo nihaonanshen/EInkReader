@@ -154,9 +154,13 @@ class LibraryActivity : Activity() {
 
             // 目录级扫描快照缓存：目录 mtime 未变则复用上次文件列表，跳过 listFiles 递归
             val indexCache = loadIndexCache()
-            val seenPaths = HashSet<String>()
+            // [review-#18] 文件/目录去重集合分离 + 深度上限：
+            // 旧单集合 seenPaths 混装两种类型（目录项可能误撞同名文件键），且无深度上限
+            // （挂载点循环/深层目录会递归到底）；MAX_SCAN_DEPTH 原本声明后从未生效
+            val seenFiles = HashSet<String>()
+            val seenDirs = HashSet<String>()
             for (dir in searchDirs) {
-                if (dir.exists() && dir.isDirectory) scanDir(dir, seenPaths, dbMap, indexCache)
+                if (dir.exists() && dir.isDirectory) scanDir(dir, 0, seenFiles, seenDirs, dbMap, indexCache)
             }
             saveIndexCache(indexCache)
 
@@ -209,7 +213,11 @@ class LibraryActivity : Activity() {
         }
     }
 
-    private fun scanDir(dir: JFile, seenPaths: MutableSet<String>, dbMap: MutableMap<String, BookInfo>, indexCache: MutableMap<String, Pair<Long, List<String>>>) {
+    /** [review-#18] 递归扫描：depth 超 MAX_SCAN_DEPTH 即停（防止挂载点循环/深层目录）；
+     *  seenFiles/seenDirs 分集合去重，隐藏目录（.git/.git 等）不递归 */
+    private fun scanDir(dir: JFile, depth: Int, seenFiles: MutableSet<String>, seenDirs: MutableSet<String>,
+                        dbMap: MutableMap<String, BookInfo>, indexCache: MutableMap<String, Pair<Long, List<String>>>) {
+        if (depth > MAX_SCAN_DEPTH) return
         // 目录快照：mtime 未变 → 直接复用上次文件列表（跳过 listFiles）
         val cached = indexCache[dir.absolutePath]
         val dirMtime = dir.lastModified()
@@ -228,21 +236,21 @@ class LibraryActivity : Activity() {
 
         val sortedFiles = filePaths!!.sortedWith(compareByDescending { JFile(it).lastModified() })
         for (absPath in sortedFiles) {
-            if (!seenPaths.contains(absPath)) {
+            if (!seenFiles.contains(absPath)) {
                 val file = JFile(absPath)
                 if (!file.exists()) continue // 缓存中的文件可能已被删除
-                seenPaths.add(absPath)
+                seenFiles.add(absPath)
                 val info = BookInfo(file)
                 if (!dbMap.containsKey(info.fileKey)) dbMap[info.fileKey] = info
             }
         }
 
-        dir.listFiles { f: JFile -> f.isDirectory }?.also { subDirs ->
+        dir.listFiles { f: JFile -> f.isDirectory && !f.name.startsWith(".") }?.also { subDirs ->
             for (subDir in subDirs) {
                 val dirPath = subDir.absolutePath
-                if (!seenPaths.contains(dirPath)) {
-                    seenPaths.add(dirPath)
-                    scanDir(subDir, seenPaths, dbMap, indexCache)
+                if (!seenDirs.contains(dirPath)) {
+                    seenDirs.add(dirPath)
+                    scanDir(subDir, depth + 1, seenFiles, seenDirs, dbMap, indexCache)
                 }
             }
         }
